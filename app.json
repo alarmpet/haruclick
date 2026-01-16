@@ -1,0 +1,70 @@
+{
+  "expo": {
+    "name": "하루클릭",
+    "slug": "haruclick",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "haruclick",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.haruclick.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "청첩장 스캔을 위해 카메라 권한이 필요합니다.",
+        "NSPhotoLibraryUsageDescription": "청첩장 사진을 불러오기 위해 앨범 권한이 필요합니다."
+      },
+      "config": {
+        "usesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.haruclick.app",
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.NOTIFICATIONS"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "청첩장 사진을 불러오기 위해 앨범 권한이 필요합니다.",
+          "cameraPermission": "청첩장 스캔을 위해 카메라 권한이 필요합니다."
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "기기 캘린더의 일정을 앱에 표시하기 위해 권한이 필요합니다."
+        }
+      ],
+      "@config-plugins/detox"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "6b4bdf3e-329c-4b3d-b433-ed1d143ef089"
+      }
+    },
+    "owner": "alarmpetgo"
+  }
+}

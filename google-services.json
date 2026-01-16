@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "377382622982",
+    "firebase_url": "https://trading-19d85-default-rtdb.firebaseio.com",
+    "project_id": "trading-19d85",
+    "storage_bucket": "trading-19d85.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:377382622982:android:586884c9ec50825a01f087",
+        "android_client_info": {
+          "package_name": "com.haruclick.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "377382622982-ln29fje84rhbkuukh5tj7svevj2i8c31.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAAywFsxKh5DWAjfmxclYSj5buKo5CUk-A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "377382622982-ln29fje84rhbkuukh5tj7svevj2i8c31.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
