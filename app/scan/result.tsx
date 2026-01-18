@@ -14,6 +14,8 @@ import { RecommendationEngine, RecommendationResult, HOTEL_MEAL_COSTS, CONVENTIO
 import { RecommendationTable } from '../../components/RecommendationTable'; // ✅ 테이블 컴포넌트 추가
 
 import { DataStore } from '../../services/DataStore';
+import { FeedbackModal } from '../../components/FeedbackModal';
+import { SuccessModal } from '../../components/SuccessModal';
 
 // ✅ 카테고리 상수 (대분류 -> 소분류 매핑)
 const CATEGORIES: Record<string, string[]> = {
@@ -38,6 +40,22 @@ const isValidDate = (dateStr: string | undefined | null): boolean => {
     const hasYear = /\d{4}-\d{2}-\d{2}/.test(dateStr);
     const hasMonthDay = /\d{1,2}\/\d{1,2}/.test(dateStr);
     return hasYear || hasMonthDay;
+};
+
+const formatDisplayDateTime = (value?: string): string => {
+    if (!value) return '';
+    const text = value.trim();
+    const match = text.match(/(\d{4}-\d{2}-\d{2})[ Tt\-]*(\d{1,2}:\d{2})?/);
+    if (!match) return value;
+    return match[2] ? `${match[1]}-${match[2]}` : match[1];
+};
+
+const normalizeDateInput = (value: string): string => {
+    const text = value.trim();
+    const match = text.match(/(\d{4}-\d{2}-\d{2})[ Tt\-]*(\d{1,2}:\d{2})?/);
+    if (!match) return text;
+    if (match[2]) return `${match[1]} ${match[2]}`;
+    return match[1];
 };
 
 const CATEGORY_LIST = Object.keys(CATEGORIES);
@@ -126,6 +144,13 @@ export default function SmartScanResultScreen() {
     const [pickerYear, setPickerYear] = useState(today.getFullYear());
     const [pickerMonth, setPickerMonth] = useState(today.getMonth() + 1);
     const [pickerDay, setPickerDay] = useState(today.getDate());
+
+    // ✅ OCR 피드백 모달 상태
+    const [ocrFeedbackVisible, setOcrFeedbackVisible] = useState(false);
+
+    // ✅ 성공 모달 상태
+    const [successModalVisible, setSuccessModalVisible] = useState(false);
+    const [successMessage, setSuccessMessage] = useState('');
 
     useFocusEffect(
         useCallback(() => {
@@ -459,12 +484,12 @@ export default function SmartScanResultScreen() {
                 }
             }
 
-            Alert.alert('저장 완료', `${selectedItems.length}건이 저장되었습니다.\n(캘린더 + 장부)`, [
-                { text: '확인', onPress: () => router.push('/calendar') }
-            ]);
-        } catch (e) {
-            Alert.alert('저장 실패', '저장 중 오류가 발생했습니다.');
-            console.error(e);
+            setSuccessMessage(`${selectedItems.length}건이 저장되었습니다`);
+            setSuccessModalVisible(true);
+        } catch (e: any) {
+            const errorMessage = e?.message || e?.toString() || '알 수 없는 오류';
+            Alert.alert('저장 실패', `저장 중 오류가 발생했습니다.\n\n상세: ${errorMessage}`);
+            console.error('[handleSave] Error:', e);
         } finally {
             setSaving(false);
         }
@@ -617,21 +642,26 @@ export default function SmartScanResultScreen() {
                                         {item.type === 'BANK_TRANSFER'
                                             ? (isDeposit ? '🔵 입금' : '🔴 출금')
                                             : item.type === 'STORE_PAYMENT' ? '🛒 결제'
-                                                : item.type === 'GIFTICON' ? '🎁 기프티콘' : item.type}
+                                                : item.type === 'GIFTICON' ? '🎁 기프티콘'
+                                                    : item.type === 'APPOINTMENT' ? '📅 일정'
+                                                        : item.type}
                                     </Text>
                                     <Text style={[
                                         styles.transactionAmount,
-                                        { color: isDeposit ? '#1565C0' : item.type === 'GIFTICON' ? Colors.text : '#C62828' }
+                                        { color: isDeposit ? '#1565C0' : item.type === 'GIFTICON' ? Colors.text : item.type === 'APPOINTMENT' ? Colors.subText : '#C62828' }
                                     ]}>
                                         {item.type === 'GIFTICON'
                                             ? ((item as any).estimatedPrice ? `${((item as any).estimatedPrice).toLocaleString()}원` : '금액 미입력')
-                                            : (isDeposit ? '+' : '-') + ((item as any).amount || 0).toLocaleString() + '원'}
+                                            : item.type === 'APPOINTMENT' ? ((item as any).location || '')
+                                                : (isDeposit ? '+' : '-') + ((item as any).amount || 0).toLocaleString() + '원'}
                                     </Text>
                                 </View>
                                 <Text style={styles.transactionTarget}>
                                     {item.type === 'GIFTICON'
                                         ? ((item as any).productName || '상품명 없음')
-                                        : ((item as any).targetName || (item as any).merchant || '알 수 없음')}
+                                        : item.type === 'APPOINTMENT'
+                                            ? ((item as any).title || '일정')
+                                            : ((item as any).targetName || (item as any).merchant || '알 수 없음')}
                                 </Text>
                                 <View style={styles.editHintRow}>
                                     {hasValidDate ? (
@@ -653,6 +683,15 @@ export default function SmartScanResultScreen() {
                         </View>
                     );
                 })}
+
+                {/* ✅ OCR 피드백 링크 */}
+                <TouchableOpacity
+                    style={styles.feedbackLink}
+                    onPress={() => setOcrFeedbackVisible(true)}
+                >
+                    <Ionicons name="chatbubble-ellipses-outline" size={16} color={Colors.subText} />
+                    <Text style={styles.feedbackLinkText}>AI 분류가 잘못됐나요? 의견 보내기</Text>
+                </TouchableOpacity>
             </>
         );
     };
@@ -694,12 +733,18 @@ export default function SmartScanResultScreen() {
                             value={(data as any).targetName || ''}
                             onChangeText={(text) => updateEditingItem('targetName', text)}
                         />
-                        <EditableRow
-                            label="날짜"
-                            value={(data as any).date || ''}
-                            onChangeText={(text) => updateEditingItem('date', text)}
-                            placeholder="YYYY-MM-DD HH:mm"
-                        />
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>날짜</Text>
+                            <TouchableOpacity
+                                style={styles.categorySelect}
+                                onPress={() => openDatePicker(editingIndex!)}
+                            >
+                                <Text style={styles.categorySelectText}>
+                                    {(data as any).date || 'YYYY-MM-DD'}
+                                </Text>
+                                <Ionicons name="calendar-outline" size={16} color={Colors.subText} />
+                            </TouchableOpacity>
+                        </View>
 
                         {/* 카테고리 선택 (터치) */}
                         <View style={styles.infoRow}>
@@ -899,7 +944,7 @@ export default function SmartScanResultScreen() {
                             <View style={styles.divider} />
 
                             <InfoRow label="행사 종류" value={invite.eventType || '알 수 없음'} />
-                            <InfoRow label="일시" value={invite.eventDate || '날짜 없음'} />
+                            <InfoRow label="일시" value={formatDisplayDateTime(invite.eventDate) || '날짜 없음'} />
                             <InfoRow label="장소" value={invite.eventLocation || '장소 정보 없음'} />
                             <InfoRow label="주인공" value={invite.mainName || '-'} />
                             <InfoRow label="초대자" value={invite.senderName || '-'} />
@@ -1095,8 +1140,8 @@ export default function SmartScanResultScreen() {
                         />
                         <EditableRow
                             label="일시"
-                            value={receipt.date || ''}
-                            onChangeText={(text) => handleUpdateData('date', text)}
+                            value={formatDisplayDateTime(receipt.date || '')}
+                            onChangeText={(text) => handleUpdateData('date', normalizeDateInput(text))}
                             placeholder="YYYY-MM-DD HH:mm"
                         />
                         <EditableRow
@@ -1191,8 +1236,8 @@ export default function SmartScanResultScreen() {
                         />
                         <EditableRow
                             label="일시"
-                            value={store.date || ''}
-                            onChangeText={(text) => handleUpdateData('date', text)}
+                            value={formatDisplayDateTime(store.date || '')}
+                            onChangeText={(text) => handleUpdateData('date', normalizeDateInput(text))}
                             placeholder="YYYY-MM-DD HH:mm"
                         />
                         <EditableRow
@@ -1265,8 +1310,8 @@ export default function SmartScanResultScreen() {
                         />
                         <EditableRow
                             label="일시"
-                            value={bank.date || ''}
-                            onChangeText={(text) => handleUpdateData('date', text)}
+                            value={formatDisplayDateTime(bank.date || '')}
+                            onChangeText={(text) => handleUpdateData('date', normalizeDateInput(text))}
                             placeholder="YYYY-MM-DD HH:mm"
                         />
                         <EditableRow
@@ -1285,7 +1330,7 @@ export default function SmartScanResultScreen() {
                                 onPress={() => openCategoryModal('category', bank.category)}
                             >
                                 <Text style={styles.categorySelectText}>
-                                    {bank.category || (bank.isUtility ? '고정지출' : '인맥')}
+                                    {bank.category || (bank.isUtility ? '비소비지출/금융' : '인맥')}
                                 </Text>
                                 <Ionicons name="chevron-down" size={16} color={Colors.subText} />
                             </TouchableOpacity>
@@ -1296,7 +1341,7 @@ export default function SmartScanResultScreen() {
                             <Text style={styles.infoLabel}>상세 분류 (소분류)</Text>
                             <TouchableOpacity
                                 style={styles.categorySelect}
-                                onPress={() => openCategoryModal('subCategory', bank.category || '인맥')}
+                                onPress={() => openCategoryModal('subCategory', bank.category || (bank.isUtility ? '비소비지출/금융' : '인맥'))}
                             >
                                 <Text style={styles.categorySelectText}>
                                     {bank.subCategory || '선택하세요'}
@@ -1346,8 +1391,8 @@ export default function SmartScanResultScreen() {
                         />
                         <EditableRow
                             label="납부 기한"
-                            value={bill.dueDate || ''}
-                            onChangeText={(text) => handleUpdateData('dueDate', text)}
+                            value={formatDisplayDateTime(bill.dueDate || '')}
+                            onChangeText={(text) => handleUpdateData('dueDate', normalizeDateInput(text))}
                             placeholder="YYYY-MM-DD"
                         />
                         <EditableRow
@@ -1395,6 +1440,66 @@ export default function SmartScanResultScreen() {
                                     : social.amount.toLocaleString()}원 (나 포함 {social.members ? social.members.length + 1 : 1}명)
                             </Text>
                         </View>
+                    </View>
+                );
+
+            case 'APPOINTMENT':
+                const appointment = data as any; // AppointmentResult
+                return (
+                    <View style={styles.card}>
+                        <View style={styles.headerRow}>
+                            <Ionicons name="calendar-outline" size={24} color={Colors.navy} />
+                            <Text style={styles.cardTitle}>일정 / 예약</Text>
+                        </View>
+                        <View style={styles.divider} />
+
+                        <EditableRow
+                            label="제목"
+                            value={appointment.title || ''}
+                            onChangeText={(text) => handleUpdateData('title', text)}
+                        />
+                        <EditableRow
+                            label="장소"
+                            value={appointment.location || ''}
+                            onChangeText={(text) => handleUpdateData('location', text)}
+                        />
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>날짜</Text>
+                            <TouchableOpacity
+                                style={styles.categorySelect}
+                                onPress={() => {
+                                    // Set data for single-item view
+                                    setDatePickerTargetIndex(0);
+                                    const existingDate = appointment.date;
+                                    if (existingDate && isValidDate(existingDate)) {
+                                        const [datePart] = existingDate.split(' ');
+                                        const parts = datePart.split('-');
+                                        if (parts.length === 3) {
+                                            setPickerYear(parseInt(parts[0], 10));
+                                            setPickerMonth(parseInt(parts[1], 10));
+                                            setPickerDay(parseInt(parts[2], 10));
+                                        }
+                                    } else {
+                                        const today = new Date();
+                                        setPickerYear(today.getFullYear());
+                                        setPickerMonth(today.getMonth() + 1);
+                                        setPickerDay(today.getDate());
+                                    }
+                                    setDatePickerVisible(true);
+                                }}
+                            >
+                                <Text style={styles.categorySelectText}>
+                                    {formatDisplayDateTime(appointment.date || '') || 'YYYY-MM-DD'}
+                                </Text>
+                                <Ionicons name="calendar-outline" size={16} color={Colors.subText} />
+                            </TouchableOpacity>
+                        </View>
+                        <EditableRow
+                            label="메모"
+                            value={appointment.memo || ''}
+                            onChangeText={(text) => handleUpdateData('memo', text)}
+                            placeholder="메모 입력"
+                        />
                     </View>
                 );
 
@@ -1645,6 +1750,17 @@ export default function SmartScanResultScreen() {
                     </View>
                 </TouchableOpacity>
             </Modal>
+
+            {/* ✅ OCR 피드백 모달 */}
+            <FeedbackModal
+                visible={ocrFeedbackVisible}
+                onClose={() => setOcrFeedbackVisible(false)}
+                ocrContext={{
+                    rawText: dataList.map(d => JSON.stringify(d)).join('\n---\n'),
+                    classifiedType: dataList.map(d => d.type).join(', '),
+                    classifiedData: dataList
+                }}
+            />
         </>
     );
 }
@@ -2323,5 +2439,19 @@ const styles = StyleSheet.create({
         fontFamily: 'Pretendard-Bold',
         fontSize: 16,
         color: Colors.white,
+    },
+    // ✅ OCR 피드백 링크 스타일
+    feedbackLink: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 16,
+        gap: 6,
+    },
+    feedbackLinkText: {
+        fontFamily: 'Pretendard-Regular',
+        fontSize: 13,
+        color: Colors.subText,
+        textDecorationLine: 'underline',
     },
 });

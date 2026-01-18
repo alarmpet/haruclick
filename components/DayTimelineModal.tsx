@@ -11,17 +11,27 @@ interface DayTimelineModalProps {
     events: EventRecord[];
     onClose: () => void;
     onEventsChange?: () => void;
+    onAddEvent?: () => void;
+    onEventPress?: (event: EventRecord) => void;
+    onEventEdit?: (event: EventRecord) => void;
 }
 
 const { width, height } = Dimensions.get('window');
 
-export function DayTimelineModal({ visible, date, events, onClose, onEventsChange }: DayTimelineModalProps) {
+export function DayTimelineModal({ visible, date, events, onClose, onEventsChange, onAddEvent, onEventPress, onEventEdit }: DayTimelineModalProps) {
     if (!visible) return null;
 
     const [year, month, day] = date.split('-');
 
+    // Debugging: Check incoming events
+    console.log(`[DayTimelineModal] Incoming events: ${events.length}`);
+    events.forEach(e => console.log(` - ${e.name} (${e.type}) source: ${e.source} ID: ${e.id} Raw: ${JSON.stringify(e)}`));
+
     // ✅ 외부 캘린더 일정(공휴일 등)은 타임라인에서 숨김 - 월별 캘린더에서만 표시
     const filteredEvents = events.filter(e => e.source !== 'external');
+
+    console.log(`[DayTimelineModal] Filtered events: ${filteredEvents.length}`);
+    filteredEvents.forEach(e => console.log(`   * Kept: ${e.name} (${e.type}) source: ${e.source}`));
 
     return (
         <Modal
@@ -31,10 +41,6 @@ export function DayTimelineModal({ visible, date, events, onClose, onEventsChang
             onRequestClose={onClose}
         >
             <View style={styles.overlay}>
-                {/* 
-                   Background can be dismissed by touching outside? 
-                   Maybe better to have a close button explicitly.
-                */}
                 <TouchableOpacity style={styles.backdrop} onPress={onClose} activeOpacity={1} />
 
                 <View style={styles.modalContent}>
@@ -43,9 +49,16 @@ export function DayTimelineModal({ visible, date, events, onClose, onEventsChang
                             <Text style={styles.dateTitle}>{month}월 {day}일</Text>
                             <Text style={styles.dateSubtitle}>{year}년</Text>
                         </View>
-                        <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-                            <Ionicons name="close" size={24} color={Colors.text} />
-                        </TouchableOpacity>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                            {onAddEvent && (
+                                <TouchableOpacity onPress={onAddEvent} style={styles.closeButton}>
+                                    <Ionicons name="add" size={24} color={Colors.text} />
+                                </TouchableOpacity>
+                            )}
+                            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                                <Ionicons name="close" size={24} color={Colors.text} />
+                            </TouchableOpacity>
+                        </View>
                     </View>
 
                     <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -53,6 +66,8 @@ export function DayTimelineModal({ visible, date, events, onClose, onEventsChang
                             events={filteredEvents}
                             title="하루 타임라인"
                             onEventsChange={onEventsChange}
+                            onEventPress={onEventPress}
+                            onEventEdit={onEventEdit}
                         />
                         <View style={{ height: 40 }} />
                     </ScrollView>

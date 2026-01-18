@@ -1,9 +1,9 @@
 import { View, Text, StyleSheet, TouchableOpacity, Animated, Dimensions, Alert, Modal, TextInput, ScrollView } from 'react-native';
-import { Stack, useRouter, useFocusEffect } from 'expo-router';
+import { Stack, useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Calendar, CalendarList, DateData, LocaleConfig } from 'react-native-calendars';
 import { Colors } from '../../constants/Colors';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { EventDetailModal } from '../../components/EventDetailModal';
 import { DayTimelineModal } from '../../components/DayTimelineModal';
@@ -13,6 +13,8 @@ import { getEvents, EventRecord, EventCategory, deleteEvent, deleteLedgerItem, u
 import { TaskListModal } from '../../components/TaskListModal';
 import { getLunarInfo } from '../../services/LunarCalendarService';
 import { DeviceCalendarService, DeviceEvent } from '../../services/DeviceCalendarService';
+import { SkeletonCalendar } from '../../components/SkeletonCalendar';
+import { useTheme } from '../../contexts/ThemeContext';
 
 const { width } = Dimensions.get('window');
 
@@ -43,8 +45,9 @@ LocaleConfig.defaultLocale = 'kr';
 
 export default function CalendarScreen() {
     const router = useRouter();
+    const { colors } = useTheme();
     const [selectedDate, setSelectedDate] = useState('');
-    const [modalVisible, setModalVisible] = useState(false);
+    const [detailModalVisible, setDetailModalVisible] = useState(false);
     const [selectedEvent, setSelectedEvent] = useState<EventRecord | null>(null);
     const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0]);
     const currentMonth = parseInt(currentDate.split('-')[1], 10);
@@ -70,7 +73,7 @@ export default function CalendarScreen() {
     // 수동 입력 Modal 상태
     const [addModalVisible, setAddModalVisible] = useState(false);
     const [addModalDate, setAddModalDate] = useState('');
-    const [initialCategory, setInitialCategory] = useState<'ceremony' | 'todo' | 'schedule'>('ceremony');
+    const [initialCategory, setInitialCategory] = useState<'ceremony' | 'todo' | 'schedule'>('schedule');
 
     // 타임라인 모달 상태 (월별 보기에서 사용)
     const [dayTimelineVisible, setDayTimelineVisible] = useState(false);
@@ -81,6 +84,7 @@ export default function CalendarScreen() {
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<EventRecord[]>([]);
 
+    const [editEvent, setEditEvent] = useState<EventRecord | null>(null); // State for editing
     // ✅ 보기 모드 상태 (month, week, day)
     const [viewMode, setViewMode] = useState<'month' | 'week' | 'day'>('month');
 
@@ -91,8 +95,45 @@ export default function CalendarScreen() {
     const [taskListVisible, setTaskListVisible] = useState(false);
 
     // ✅ 월 선택 모달 상태
+    // ✅ 월 선택 모달 상태
     const [monthPickerVisible, setMonthPickerVisible] = useState(false);
     const currentYear = parseInt(currentDate.split('-')[0], 10);
+
+    // Deep Link Init
+    const { date: initialDateParam } = useLocalSearchParams();
+
+    useEffect(() => {
+        if (initialDateParam && typeof initialDateParam === 'string') {
+            console.log('[Calendar] Deep link param:', initialDateParam);
+            setCurrentDate(initialDateParam);
+            setSelectedDate(initialDateParam);
+
+            // ✅ 뷰 모드를 강제로 변경하지 않음 (사용자 요청)
+            // setViewMode('day'); 
+
+            // ✅ 데이터가 로드된 상태라면 즉시 갱신
+            if (events.length > 0 || externalEvents.length > 0) {
+                const mappedExternal: EventRecord[] = externalEvents.map(e => ({
+                    id: e.id,
+                    category: 'schedule',
+                    type: 'schedule',
+                    name: e.title,
+                    date: e.startDate.split('T')[0],
+                    source: 'external',
+                    color: e.color,
+                    startTime: e.startDate.includes('T') ? e.startDate.split('T')[1].substring(0, 5) : undefined,
+                    endTime: e.endDate.includes('T') ? e.endDate.split('T')[1].substring(0, 5) : undefined,
+                    location: e.location,
+                    memo: e.notes
+                }));
+                const allEvents = [...events, ...mappedExternal];
+
+                const dailyEvents = allEvents.filter(e => e.date === initialDateParam);
+                setSelectedDayEvents(dailyEvents);
+                setDayTimelineVisible(true);
+            }
+        }
+    }, [initialDateParam, events, externalEvents]);
 
     // 데이터 로드 함수
     const fetchEvents = async () => {
@@ -195,7 +236,22 @@ export default function CalendarScreen() {
         // 2. 외부 일정 처리 (schedule 필터가 켜진 경우에만 표시하거나, 항상 표시?)
         // 일단 'schedule' 필터에 종속시킨다.
         if (activeFilters.schedule) {
-            externalData.forEach(event => {
+            const visibleExternal = externalData.filter(ext => {
+                const dateStr = ext.startDate.split('T')[0];
+                const isDuplicate = internalData.some(int => {
+                    const nameMatch = (int.name || '').normalize('NFC').replace(/\s+/g, '') === (ext.title || '').normalize('NFC').replace(/\s+/g, '');
+
+                    const intDate = new Date(int.date);
+                    const extDate = new Date(dateStr);
+                    const diffTime = Math.abs(intDate.getTime() - extDate.getTime());
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                    return nameMatch && (int.date === dateStr || diffDays <= 1);
+                });
+                return !isDuplicate;
+            });
+
+            visibleExternal.forEach(event => {
                 const dateStr = event.startDate.split('T')[0];
                 if (!newMarkedDates[dateStr]) {
                     newMarkedDates[dateStr] = { events: [] };
@@ -217,6 +273,8 @@ export default function CalendarScreen() {
 
     // 내부/외부 일정 합치기
     const getMergedEvents = useCallback(() => {
+        const dedupeDebug = false;
+        const mergedEventsLog = false;
         const mappedExternal: EventRecord[] = externalEvents.map(e => ({
             id: e.id,
             category: 'schedule',
@@ -230,7 +288,50 @@ export default function CalendarScreen() {
             location: e.location,
             memo: e.notes
         }));
-        return [...events, ...mappedExternal];
+
+        // ✅ 중복 제거: 내부 일정과 제목, 날짜가 같은 외부 일정은 숨김
+        const filteredExternal = mappedExternal.filter(ext => {
+            // Debug log for deduplication
+            const duplicate = events.find(int => {
+                // Normalize strings to handle NFC/NFD differences AND strip all spaces AND lower case
+                const intName = (int.name || '').normalize('NFC').replace(/\s+/g, '').toLowerCase();
+                const extName = (ext.name || '').normalize('NFC').replace(/\s+/g, '').toLowerCase();
+
+                // Debug specific event
+                if (dedupeDebug && (intName.includes('한화') || extName.includes('한화'))) {
+                    console.log(`[Dedupe Check] Int: '${intName}'(${int.date}), Ext: '${extName}'(${ext.date})`);
+                }
+
+                const nameMatch = intName === extName;
+
+                // Fuzzy date check (+/- 1 day)
+                const intDate = new Date(int.date);
+                const extDate = new Date(ext.date);
+                const diffTime = Math.abs(intDate.getTime() - extDate.getTime());
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                const dateMatch = int.date === ext.date || diffDays <= 1;
+
+                if (dedupeDebug && (intName.includes('한화') || extName.includes('한화'))) {
+                    console.log(`[Dedupe Result] NameMatch: ${nameMatch}, DateMatch: ${dateMatch} (Diff: ${diffDays})`);
+                }
+
+                return nameMatch && dateMatch;
+            });
+
+            if (duplicate) {
+                if (mergedEventsLog) {
+                    console.log(`[getMergedEvents] Hiding duplicate external event: ${ext.name} (${ext.date})`);
+                }
+                return false;
+            }
+            return true;
+        });
+
+        if (mergedEventsLog) {
+            console.log(`[getMergedEvents] Internal: ${events.length}, External(Total): ${mappedExternal.length}, External(Filtered): ${filteredExternal.length}`);
+        }
+        return [...events, ...filteredExternal];
     }, [events, externalEvents]);
 
     // 필터 변경 시
@@ -257,6 +358,7 @@ export default function CalendarScreen() {
         const today = new Date().toISOString().split('T')[0];
         setAddModalDate(today);
         setInitialCategory(category as any);
+        setEditEvent(null); // Ensure creation mode
         setAddModalVisible(true);
     };
 
@@ -274,7 +376,8 @@ export default function CalendarScreen() {
                 setDayTimelineVisible(true);
             } else {
                 setAddModalDate(date.dateString);
-                setInitialCategory('ceremony');
+                setEditEvent(null); // Ensure creation mode
+                setInitialCategory('schedule');
                 setAddModalVisible(true);
             }
         }
@@ -295,9 +398,27 @@ export default function CalendarScreen() {
         const lunarInfo = getLunarInfo(y, m, d);
 
         // 일요일 또는 명절이면 빨간색
-        const dObj = new Date(date.dateString); // 주의: timezone 이슈 있을 수 있으나 date.dateString은 YYYY-MM-DD
+        const dObj = new Date(date.dateString);
         const dayOfWeek = dObj.getDay(); // 0: Sun
         const isRedDay = dayOfWeek === 0 || lunarInfo.isHoliday;
+
+        // ✅ 가계부 모드인지 확인 (가계부 필터만 켜져있고 나머지는 꺼져있을 때)
+        const isLedgerOnlyMode = filters.expense && !filters.ceremony && !filters.todo && !filters.schedule;
+
+        // 가계부 모드일 때 합계 계산
+        let dailyIncome = 0;
+        let dailyExpense = 0;
+
+        if (isLedgerOnlyMode) {
+            dayEvents.forEach((event: any) => {
+                const amt = event.amount || 0;
+                if (event.isReceived) {
+                    dailyIncome += Math.abs(amt);
+                } else {
+                    dailyExpense += Math.abs(amt);
+                }
+            });
+        }
 
         return (
             <TouchableOpacity
@@ -326,21 +447,38 @@ export default function CalendarScreen() {
                     {lunarInfo.holidayName || lunarInfo.lunarDate}
                 </Text>
 
-                <View style={styles.eventTags}>
-                    {dayEvents.slice(0, 3).map((event: any, idx: number) => (
-                        <View key={idx} style={[styles.eventTag, { backgroundColor: event.color }]}>
-                            <Text style={styles.eventTagText} numberOfLines={1}>
-                                {event.name}
+                {isLedgerOnlyMode ? (
+                    // ✅ 가계부 모드: 금액 표시
+                    <View style={{ marginTop: 2, alignItems: 'center', width: '100%' }}>
+                        {dailyIncome > 0 && (
+                            <Text style={{ fontSize: 9, color: '#0064FF', fontFamily: 'Pretendard-Bold' }} numberOfLines={1}>
+                                +{dailyIncome.toLocaleString()}
                             </Text>
-                        </View>
-                    ))}
-                    {dayEvents.length > 3 && (
-                        <Text style={styles.moreText}>+{dayEvents.length - 3}</Text>
-                    )}
-                </View>
+                        )}
+                        {dailyExpense > 0 && (
+                            <Text style={{ fontSize: 9, color: '#FF4D4D', fontFamily: 'Pretendard-Bold' }} numberOfLines={1}>
+                                -{dailyExpense.toLocaleString()}
+                            </Text>
+                        )}
+                    </View>
+                ) : (
+                    // ✅ 일반 모드: 점(Dot) 태그 표시
+                    <View style={styles.eventTags}>
+                        {dayEvents.slice(0, 3).map((event: any, idx: number) => (
+                            <View key={idx} style={[styles.eventTag, { backgroundColor: event.color }]}>
+                                <Text style={styles.eventTagText} numberOfLines={1}>
+                                    {event.name}
+                                </Text>
+                            </View>
+                        ))}
+                        {dayEvents.length > 3 && (
+                            <Text style={styles.moreText}>+{dayEvents.length - 3}</Text>
+                        )}
+                    </View>
+                )}
             </TouchableOpacity>
         );
-    }, [markedDates, selectedDate, events, viewMode]);
+    }, [markedDates, selectedDate, events, viewMode, filters]);
 
     // ✅ 일별 보기 렌더링
     const renderDayView = () => {
@@ -351,12 +489,12 @@ export default function CalendarScreen() {
         const [year, month, day] = targetDate.split('-');
 
         return (
-            <View style={{ flex: 1, backgroundColor: '#fff' }}>
-                <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0', backgroundColor: '#fff' }}>
-                    <Text style={{ fontFamily: 'Pretendard-Bold', fontSize: 20, color: Colors.text }}>
+            <View style={{ flex: 1, backgroundColor: colors.background }}>
+                <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.background }}>
+                    <Text style={{ fontFamily: 'Pretendard-Bold', fontSize: 20, color: colors.text }}>
                         {month}월 {day}일
                     </Text>
-                    <Text style={{ fontFamily: 'Pretendard-Medium', fontSize: 14, color: Colors.subText }}>
+                    <Text style={{ fontFamily: 'Pretendard-Medium', fontSize: 14, color: colors.subText }}>
                         {year}년
                     </Text>
                 </View>
@@ -364,6 +502,11 @@ export default function CalendarScreen() {
                     events={dayEvents}
                     title="" // 타이틀 숨김
                     onEventsChange={fetchEvents}
+                    onEventEdit={(event) => {
+                        setEditEvent(event);
+                        setAddModalDate(event.date);
+                        setAddModalVisible(true);
+                    }}
                 />
             </View>
         );
@@ -384,7 +527,7 @@ export default function CalendarScreen() {
         }
 
         return (
-            <ScrollView style={{ flex: 1, backgroundColor: '#fff' }}>
+            <ScrollView style={{ flex: 1, backgroundColor: colors.background }}>
                 <View style={styles.weekContainer}>
                     {weekDates.map((dateStr, idx) => {
                         const dateObj = new Date(dateStr);
@@ -446,7 +589,7 @@ export default function CalendarScreen() {
     const handleDeleteEvent = async (event: EventRecord) => {
         try {
             setLoading(true);
-            setModalVisible(false); // 상세 모달 닫기
+            setDetailModalVisible(false); // 상세 모달 닫기
 
             console.log('[handleDeleteEvent] Deleting event:', { id: event.id, source: event.source, name: event.name });
 
@@ -481,9 +624,9 @@ export default function CalendarScreen() {
             }
             await fetchEvents();
             Alert.alert('삭제 완료', '내역이 삭제되었습니다.');
-        } catch (error) {
+        } catch (error: any) {
             console.error(error);
-            Alert.alert('오류', '삭제 중 문제가 발생했습니다.');
+            Alert.alert('오류', error.message || '삭제 중 문제가 발생했습니다.');
             setLoading(false);
         }
     };
@@ -508,6 +651,7 @@ export default function CalendarScreen() {
         const today = new Date().toISOString().split('T')[0];
         setAddModalDate(today);
         setInitialCategory('todo'); // 할 일 카테고리로 설정
+        setEditEvent(null); // Ensure creation mode
         setAddModalVisible(true);
     };
 
@@ -579,9 +723,7 @@ export default function CalendarScreen() {
 
             {
                 loading ? (
-                    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                        <Text style={{ color: '#fff', fontFamily: 'Pretendard-Medium' }}>일정 로딩 중...</Text>
-                    </View>
+                    <SkeletonCalendar />
                 ) : (
                     <>
                         {viewMode === 'month' && (
@@ -645,28 +787,60 @@ export default function CalendarScreen() {
                 </TouchableOpacity>
             </View>
 
-            {/* Modals */}
-            <EventDetailModal
-                visible={modalVisible}
-                event={selectedEvent}
-                onClose={() => setModalVisible(false)}
-                onDelete={() => selectedEvent && handleDeleteEvent(selectedEvent)}
-            />
-
+            {/* Day Timeline Modal */}
             <DayTimelineModal
                 visible={dayTimelineVisible}
                 date={selectedDate}
                 events={selectedDayEvents}
                 onClose={() => setDayTimelineVisible(false)}
                 onEventsChange={fetchEvents}
+                onAddEvent={() => {
+                    setAddModalDate(selectedDate);
+                    setEditEvent(null); // Ensure creation mode
+                    setInitialCategory('schedule');
+                    setAddModalVisible(true);
+                }}
+                onEventPress={(event) => {
+                    setSelectedEvent(event);
+                    setDetailModalVisible(true);
+                }}
+                onEventEdit={(event) => {
+                    setDayTimelineVisible(false); // Close timeline if open
+                    setEditEvent(event);
+                    setAddModalDate(event.date);
+                    setAddModalVisible(true);
+                }}
             />
 
+            {/* Event Detail Modal with Edit Support */}
+            <EventDetailModal
+                visible={detailModalVisible}
+                event={selectedEvent}
+                onClose={() => setDetailModalVisible(false)}
+                onDelete={handleDeleteEvent}
+                onEdit={(event) => {
+                    setDetailModalVisible(false);
+                    setDayTimelineVisible(false); // Close timeline if open
+                    setEditEvent(event);
+                    setAddModalDate(event.date); // or event.dateString
+                    setAddModalVisible(true);
+                }}
+            />
+
+            {/* Add Event Modal with Edit Support */}
             <AddEventModal
                 visible={addModalVisible}
-                onClose={() => setAddModalVisible(false)}
-                onSaved={handleEventSaved}
+                onClose={() => {
+                    setAddModalVisible(false);
+                    setEditEvent(null); // Reset edit state on close
+                }}
+                onSaved={() => {
+                    fetchEvents();
+                    setEditEvent(null);
+                }}
                 initialDate={addModalDate}
                 initialCategory={initialCategory}
+                editEvent={editEvent}
             />
 
             {/* 검색 모달 */}

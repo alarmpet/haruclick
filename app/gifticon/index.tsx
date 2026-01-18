@@ -74,8 +74,8 @@ export default function GifticonInboxScreen() {
     };
 
     const renderItem = ({ item }: { item: GifticonItem }) => {
-        const dDay = getDaysLeft(item.expiryDate);
-        const isUrgent = dDay === 'D-Day' || (dDay.startsWith('D-') && parseInt(dDay.replace('D-', ''), 10) <= 7);
+            const dDay = getDaysLeft(item.expiryDate);
+            const isUrgent = dDay === 'D-Day' || (dDay.startsWith('D-') && parseInt(dDay.replace('D-', ''), 10) <= 7);
 
         return (
             <Card style={styles.card}>
@@ -96,7 +96,7 @@ export default function GifticonInboxScreen() {
                                 <Text style={[styles.dDayText, isUrgent && styles.dDayTextUrgent]}>{dDay}</Text>
                             </View>
                         </View>
-                        <Text style={styles.sender}>From. {item.sender}</Text>
+                        <Text style={styles.sender}>From. {item.senderName || ''}</Text>
                         <Text style={styles.expiryDate}>유효기간 {item.expiryDate}까지</Text>
                     </View>
                 </View>

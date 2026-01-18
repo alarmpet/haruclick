@@ -29,8 +29,9 @@ export interface CommunityReaction {
  */
 async function performOCR(imageUri: string): Promise<string> {
     try {
-        const text = await extractTextFromImage(imageUri);
-        return text || "";
+        const result = await extractTextFromImage(imageUri);
+        if (typeof result === 'string') return result || "";
+        return result?.text || "";
     } catch (e) {
         console.error("OCR Error in AnalysisEngine:", e);
         return "";

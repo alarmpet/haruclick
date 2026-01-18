@@ -57,6 +57,7 @@
           "calendarPermission": "기기 캘린더의 일정을 앱에 표시하기 위해 권한이 필요합니다."
         }
       ],
+      "react-native-document-scanner-plugin",
       "@config-plugins/detox"
     ],
     "extra": {

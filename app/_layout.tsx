@@ -116,8 +116,24 @@ export default function RootLayout() {
         init();
 
         // Auth Check
-        supabase.auth.getSession().then(({ data: { session } }) => {
+        // Auth Check
+        supabase.auth.getSession().then(({ data: { session }, error }) => {
+            if (error) {
+                console.log('Session init error:', error);
+                // Invalid Refresh Token 에러 발생 시 강제 로그아웃
+                if (error.message && (
+                    error.message.includes('Refresh Token') ||
+                    error.message.includes('Invalid Refresh Token')
+                )) {
+                    console.log('Invalid token detected, signing out...');
+                    supabase.auth.signOut().catch(() => { });
+                    setSession(null);
+                }
+            }
             setSession(session);
+            setInitialized(true);
+        }).catch(e => {
+            console.log('Session check failed:', e);
             setInitialized(true);
         });
 

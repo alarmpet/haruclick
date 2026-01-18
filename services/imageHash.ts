@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Crypto from 'expo-crypto';
 
 async function hashString(value: string): Promise<string> {
@@ -7,7 +7,7 @@ async function hashString(value: string): Promise<string> {
 
 export async function getImageHash(uri: string): Promise<string> {
     try {
-        const info = await FileSystem.getInfoAsync(uri, { size: true });
+        const info = await FileSystem.getInfoAsync(uri);
         if (info.exists && typeof info.size === 'number') {
             const signature = `${uri}|${info.size}|${info.modificationTime ?? ''}`;
             return await hashString(signature);

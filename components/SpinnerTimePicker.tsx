@@ -39,6 +39,11 @@ export default function SpinnerTimePicker({ hour, minute, onChange }: SpinnerTim
     // Initial scroll position: Start at the middle set of data
     const initialHourIndex = (HALF_LOOPS * HOURS_BASE.length) + baseHourIndex;
     const initialMinuteIndex = (HALF_LOOPS * MINUTES_BASE.length) + baseMinuteIndex;
+    const lastHourIndexRef = useRef<number | null>(null);
+
+    if (lastHourIndexRef.current === null) {
+        lastHourIndexRef.current = initialHourIndex;
+    }
 
     // 3. Render Item
     const renderItem = ({ item, index, type }) => {
@@ -79,15 +84,14 @@ export default function SpinnerTimePicker({ hour, minute, onChange }: SpinnerTim
         } else if (type === 'hour') {
             // Safe modulo access
             if (index < 0) return;
-            const safeIndex = index % HOURS_DATA.length;
-            const selected12 = HOURS_DATA[safeIndex];
+            const lastIndex = lastHourIndexRef.current ?? index;
+            const diff = index - lastIndex;
+            if (diff === 0) return;
 
-            if (selected12 !== undefined) {
-                let newH = selected12 === 12 ? 0 : selected12;
-                if (isPm) newH += 12;
-                // Only update if changed (prevents loop)
-                if (newH !== hour) onChange(newH, minute);
-            }
+            lastHourIndexRef.current = index;
+            let newH = (hour + diff) % 24;
+            if (newH < 0) newH += 24;
+            if (newH !== hour) onChange(newH, minute);
         } else if (type === 'minute') {
             if (index < 0) return;
             const safeIndex = index % MINUTES_DATA.length;

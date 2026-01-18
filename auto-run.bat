@@ -13,5 +13,13 @@ if exist .env (
 ) else (
     echo Warning: .env file not found. Using default values.
 )
+
+:ask_admin
+set /p START_ADMIN="Start Admin Web Dashboard (Y/N)? "
+if /i "%START_ADMIN%"=="Y" (
+    echo Starting Admin Web...
+    start cmd /k "..\admin-web\auto-run.bat"
+)
+
 call npx expo start --dev-client --tunnel
 pause

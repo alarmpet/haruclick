@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated, Easing, Pressable } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Colors } from '../constants/Colors';
 import { useRouter } from 'expo-router';
@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, fetchUserStats, getTodayEvents, getUpcomingEvents, EventRecord } from '../services/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 
 export default function Home() {
     const router = useRouter();
@@ -16,6 +17,34 @@ export default function Home() {
     // Ripple Animation (2개만 사용 - 잔잔하게)
     const ripple1 = useRef(new Animated.Value(0)).current;
     const ripple2 = useRef(new Animated.Value(0)).current;
+
+    // 버튼 press 애니메이션
+    const scaleValue = useRef(new Animated.Value(1)).current;
+
+    const handlePressIn = () => {
+        Animated.spring(scaleValue, {
+            toValue: 0.92,
+            useNativeDriver: true,
+        }).start();
+    };
+
+    const handlePressOut = () => {
+        Animated.spring(scaleValue, {
+            toValue: 1,
+            friction: 3,
+            tension: 40,
+            useNativeDriver: true,
+        }).start();
+    };
+
+    const handleScanPress = async () => {
+        try {
+            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        } catch (e) {
+            // Haptics may not be available on all devices
+        }
+        router.push('/scan/universal');
+    };
 
     // D-Day 계산
     const getDDay = (dateStr: string) => {
@@ -106,16 +135,18 @@ export default function Home() {
                     <Animated.View style={[styles.ripple, getRippleStyle(ripple1)]} />
                     <Animated.View style={[styles.ripple, getRippleStyle(ripple2)]} />
 
-                    {/* Main Button */}
-                    <TouchableOpacity
-                        style={styles.heroButton}
-                        onPress={() => router.push('/scan/universal')}
-                        activeOpacity={0.9}
+                    {/* Main Button with Scale Animation */}
+                    <Pressable
+                        onPressIn={handlePressIn}
+                        onPressOut={handlePressOut}
+                        onPress={handleScanPress}
                     >
-                        <Ionicons name="camera" size={48} color={Colors.white} />
-                        <Text style={styles.heroText}>지금 사진을 찍거나</Text>
-                        <Text style={styles.heroText}>이미지를 올려보세요</Text>
-                    </TouchableOpacity>
+                        <Animated.View style={[styles.heroButton, { transform: [{ scale: scaleValue }] }]}>
+                            <Ionicons name="camera" size={48} color={Colors.white} />
+                            <Text style={styles.heroText}>지금 사진을 찍거나</Text>
+                            <Text style={styles.heroText}>이미지를 올려보세요</Text>
+                        </Animated.View>
+                    </Pressable>
                 </View>
 
                 {/* Quick Links */}
@@ -193,13 +224,32 @@ export default function Home() {
                     </View>
                     {upcomingEvents.length === 0 ? (
                         <View style={styles.emptyUpcoming}>
-                            <Text style={styles.emptyText}>예정된 일정이 없어요</Text>
+                            <View style={styles.emptyIconContainer}>
+                                <Ionicons name="calendar-outline" size={40} color="rgba(255,255,255,0.25)" />
+                            </View>
+                            <Text style={styles.emptyTitle}>아직 예정된 일정이 없어요</Text>
+                            <Text style={styles.emptyHint}>
+                                청첩장이나 문자를 스캔하면{'\n'}자동으로 일정이 등록됩니다
+                            </Text>
+                            <TouchableOpacity
+                                style={styles.emptyButton}
+                                onPress={() => router.push('/scan/universal')}
+                                activeOpacity={0.8}
+                            >
+                                <Ionicons name="scan-outline" size={18} color={Colors.white} />
+                                <Text style={styles.emptyButtonText}>첫 스캔 시작하기</Text>
+                            </TouchableOpacity>
                         </View>
                     ) : (
                         upcomingEvents.map((event) => {
                             const dDay = getDDay(event.date);
                             return (
-                                <View key={event.id} style={styles.upcomingItem}>
+                                <TouchableOpacity
+                                    key={event.id}
+                                    style={styles.upcomingItem}
+                                    onPress={() => router.push({ pathname: '/calendar', params: { date: event.date.split('T')[0] } })}
+                                    activeOpacity={0.7}
+                                >
                                     <View style={styles.upcomingLeft}>
                                         <Text style={styles.upcomingType}>{event.type === 'wedding' ? '💒' : event.type === 'funeral' ? '🖤' : '🎉'}</Text>
                                         <View>
@@ -208,7 +258,7 @@ export default function Home() {
                                         </View>
                                     </View>
                                     <Text style={[styles.upcomingDDay, dDay === 'D-Day' && styles.dDayToday]}>{dDay}</Text>
-                                </View>
+                                </TouchableOpacity>
                             );
                         })
                     )}
@@ -434,7 +484,44 @@ const styles = StyleSheet.create({
     },
     emptyUpcoming: {
         alignItems: 'center',
-        paddingVertical: 20,
+        paddingVertical: 24,
+    },
+    emptyIconContainer: {
+        width: 72,
+        height: 72,
+        borderRadius: 36,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    emptyTitle: {
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 16,
+        color: Colors.white,
+        marginBottom: 8,
+    },
+    emptyHint: {
+        fontFamily: 'Pretendard-Regular',
+        fontSize: 13,
+        color: Colors.subText,
+        textAlign: 'center',
+        lineHeight: 20,
+        marginBottom: 20,
+    },
+    emptyButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.orange,
+        paddingVertical: 12,
+        paddingHorizontal: 20,
+        borderRadius: 24,
+        gap: 8,
+    },
+    emptyButtonText: {
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 14,
+        color: Colors.white,
     },
     emptyText: {
         fontFamily: 'Pretendard-Regular',

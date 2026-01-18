@@ -171,6 +171,46 @@ export async function updateEvent(id: string, updates: any) {
     }
 }
 
+export async function updateLedger(id: string, updates: any) {
+    try {
+        const { error } = await supabase.from('ledger').update(updates).eq('id', id);
+        if (error) throw error;
+        return { error: null };
+    } catch (e: any) {
+        console.error('Error updating ledger:', e);
+        showError(e.message ?? '가계부 업데이트 실패');
+        return { error: e };
+    }
+}
+
+export async function updateBankTransaction(id: string, updates: any) {
+    try {
+        const { error } = await supabase.from('bank_transactions').update(updates).eq('id', id);
+        if (error) throw error;
+        return { error: null };
+    } catch (e: any) {
+        console.error('Error updating bank transaction:', e);
+        showError(e.message ?? '거래내역 업데이트 실패');
+        return { error: e };
+    }
+}
+
+export async function updateUnifiedEvent(event: EventRecord, updates: any) {
+    console.log('[updateUnifiedEvent]', event.source, event.id, updates);
+    // 캐시 무효화
+    invalidateCache();
+
+    // source에 따라 분기
+    if (event.source === 'ledger') {
+        return updateLedger(event.id, updates);
+    } else if (event.source === 'bank_transactions') {
+        return updateBankTransaction(event.id, updates);
+    } else {
+        // events or external (external은 수정 불가 처리 체크할 것)
+        return updateEvent(event.id, updates);
+    }
+}
+
 export async function getUpcomingEvents(limit = 2): Promise<EventRecord[]> {
     const cacheKey = `upcoming_${limit}`;
     const cached = getCached<EventRecord[]>(cacheKey);
@@ -201,7 +241,7 @@ export async function getUpcomingEvents(limit = 2): Promise<EventRecord[]> {
         const result = data.map((item: any) => ({
             id: item.id,
             category: item.category || 'ceremony',
-            type: item.type,
+            type: item.type === 'APPOINTMENT' ? '일정' : item.type, // UI 표시용 한글화
             name: item.name,
             relation: item.relation,
             date: item.event_date,
@@ -353,7 +393,7 @@ export async function getEvents(): Promise<EventRecord[]> {
     const eventRecords = (events || []).map((item: any) => ({
         id: item.id,
         category: item.category || 'ceremony',
-        type: item.type,
+        type: item.type === 'APPOINTMENT' ? '일정' : item.type, // UI 표시용 한글화
         name: item.name,
         relation: item.relation,
         date: item.event_date,
@@ -405,10 +445,13 @@ export async function getEvents(): Promise<EventRecord[]> {
  * 이벤트 삭제
  */
 export async function deleteEvent(eventId: string) {
+    console.log('[deleteEvent] Deleting event ID:', eventId);
+
     // UUID 형식 검증 (events 테이블은 UUID만 사용)
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(eventId)) {
         console.error('Error deleting event: Invalid UUID format:', eventId);
+        // Alert handled by caller usually, but throwing error ensures it propagates
         throw new Error(`잘못된 ID 형식입니다. 이 항목은 Supabase에서 직접 삭제해주세요. (ID: ${eventId})`);
     }
 
@@ -418,9 +461,10 @@ export async function deleteEvent(eventId: string) {
         .eq('id', eventId);
 
     if (error) {
-        console.error('Error deleting event:', error);
+        console.error('Error deleting event from Supabase:', error);
         throw error;
     }
+    console.log('[deleteEvent] Success');
     return { success: true };
 }
 
@@ -460,7 +504,7 @@ export async function deleteBankTransaction(itemId: string) {
  * Find people with similar names in the events ledger.
  * This helps in linking new gifticons to existing contacts.
  */
-import { ScannedData, StorePaymentResult, BankTransactionResult, InvitationResult, GifticonResult, TransferResult, ReceiptResult, BillResult, SocialResult } from './ai/OpenAIService';
+import { ScannedData, StorePaymentResult, BankTransactionResult, InvitationResult, GifticonResult, TransferResult, ReceiptResult, BillResult, SocialResult, AppointmentResult } from './ai/OpenAIService';
 
 /**
  * AI에서 반환된 날짜 형식 (예: "2023-01-11 18:35")을 
@@ -525,8 +569,56 @@ export async function saveUnifiedEvent(
             throw new Error('로그인이 필요합니다. 다시 로그인해주세요.');
         }
 
-        if (data.type === 'INVITATION') {
+        if (data.type === 'APPOINTMENT' || data.type === 'UNKNOWN') {
+            // ✅ Handle APPOINTMENT (Schedule/Todo)
+            const appointment = data as AppointmentResult;
+            console.log('[saveUnifiedEvent] APPOINTMENT 저장 시작:', appointment.title || '제목 없음');
+
+            // Safe date conversion: Ensure we don't pick up just a time string
+            let eventDateStr = appointment.date;
+            if (!eventDateStr && options?.startTime && options.startTime.includes('T')) {
+                eventDateStr = options.startTime.split('T')[0];
+            } else if (!eventDateStr) {
+                eventDateStr = new Date().toISOString().split('T')[0];
+            }
+
+            const safeEventDate = toISODate(eventDateStr).split('T')[0];
+
+            const { error } = await supabase.from('events').insert({
+                user_id: userId,
+                name: appointment.title || '일정',
+                event_date: safeEventDate,
+                type: data.type === 'UNKNOWN' ? 'OTHER' : 'APPOINTMENT',
+                category: options?.category || 'schedule',
+                location: appointment.location || (options?.category === 'todo' ? undefined : ''),
+                memo: appointment.memo || '',
+                start_time: options?.startTime || null,
+                end_time: options?.endTime || null,
+                is_all_day: options?.isAllDay || false,
+                recurrence_rule: options?.recurrence || 'none', // Fixed column name from recurrence to recurrence_rule
+                alarm_minutes: options?.alarmMinutes,
+            });
+
+            if (error) throw error;
+        } else if (data.type === 'INVITATION') {
             const invite = data as InvitationResult;
+            console.log('[saveUnifiedEvent] INVITATION 저장 시작:', JSON.stringify({
+                eventDate: invite.eventDate,
+                eventType: invite.eventType,
+                senderName: invite.senderName,
+                eventLocation: invite.eventLocation,
+                recommendedAmount: invite.recommendedAmount,
+                relation: invite.relation
+            }));
+
+            // ✅ 날짜 유효성 검사
+            if (!invite.eventDate || invite.eventDate === '날짜 없음') {
+                throw new Error('청첩장에 유효한 날짜 정보가 없습니다. 날짜를 직접 입력해주세요.');
+            }
+
+            // ✅ 안전한 날짜 변환 (toISODate 헬퍼 사용)
+            const safeEventDate = toISODate(invite.eventDate).split('T')[0];
+            console.log('[saveUnifiedEvent] 변환된 날짜:', safeEventDate);
 
             // Recurrence Setup
             const groupId = options?.recurrence && options.recurrence !== 'none'
@@ -542,7 +634,7 @@ export async function saveUnifiedEvent(
 
             for (let i = 0; i < repeatCount; i++) {
                 // 날짜 계산
-                const currentDate = new Date(invite.eventDate);
+                const currentDate = new Date(safeEventDate);
                 if (i > 0) {
                     if (options?.recurrence === 'daily') currentDate.setDate(currentDate.getDate() + i);
                     else if (options?.recurrence === 'weekly') currentDate.setDate(currentDate.getDate() + i * 7);
@@ -551,25 +643,37 @@ export async function saveUnifiedEvent(
                 }
                 const currentDateStr = currentDate.toISOString().split('T')[0];
 
-                const { error: eventError } = await supabase.from('events').insert({
-                    user_id: userId,
-                    type: invite.eventType,
-                    name: invite.senderName,
-                    event_date: currentDateStr,
-                    location: invite.eventLocation,
-                    image_url: imageUrl,
-                    amount: invite.recommendedAmount,
-                    relation: invite.relation || '지인',
+            const resolvedName =
+                invite.senderName ||
+                invite.mainName ||
+                invite.hostNames?.[0] ||
+                invite.eventLocation ||
+                '이름 없음';
+            const insertData = {
+                user_id: userId,
+                type: invite.eventType || 'wedding',
+                name: resolvedName,
+                event_date: currentDateStr,
+                location: invite.eventLocation,
+                image_url: imageUrl,
+                amount: invite.recommendedAmount || 0,
+                relation: invite.relation || '지인',
                     is_received: false,
-                    recurrence_rule: options?.recurrence,
+                    recurrence_rule: options?.recurrence || null,
                     group_id: groupId,
-                    alarm_minutes: options?.alarmMinutes,
-                    start_time: options?.startTime,
-                    end_time: options?.endTime,
-                    is_all_day: options?.isAllDay
-                });
+                    alarm_minutes: options?.alarmMinutes || null,
+                    start_time: options?.startTime || null,
+                    end_time: options?.endTime || null,
+                    is_all_day: options?.isAllDay ?? false
+                };
+                console.log('[saveUnifiedEvent] INSERT 데이터:', JSON.stringify(insertData));
 
-                if (eventError) throw eventError;
+                const { error: eventError } = await supabase.from('events').insert(insertData);
+
+                if (eventError) {
+                    console.error('[saveUnifiedEvent] INVITATION INSERT 실패:', eventError);
+                    throw new Error(`청첩장 저장 실패: ${eventError.message || eventError.code || JSON.stringify(eventError)}`);
+                }
 
                 // 알림 스케줄링 (20개까지만 제한)
                 if (options?.alarmMinutes && i < 20) {
@@ -581,8 +685,8 @@ export async function saveUnifiedEvent(
                     );
                 }
             }
+            console.log('[saveUnifiedEvent] INVITATION 저장 완료');
         }
-        console.log(`[saveUnifiedEvent] 일정(INVITATION) 저장 완료`);
 
         if (data.type === 'GIFTICON') {
             const gift = data as GifticonResult;
@@ -618,9 +722,9 @@ export async function saveUnifiedEvent(
                 amount: pay.amount,
                 merchant_name: pay.merchant,
                 category: pay.category || classifyMerchant(pay.merchant),
-                sub_category: pay.subCategory,
+                sub_category: (pay as any).subCategory,
                 image_url: imageUrl,
-                memo: pay.memo || `[자동분류] ${pay.category}${pay.subCategory ? ' > ' + pay.subCategory : ''}`,
+                memo: (pay as any).memo || `[자동분류] ${pay.category}${(pay as any).subCategory ? ' > ' + (pay as any).subCategory : ''}`,
                 raw_text: JSON.stringify(data)
             });
             if (error) throw error;
@@ -630,15 +734,15 @@ export async function saveUnifiedEvent(
         } else if (data.type === 'BANK_TRANSFER') {
             const trans = data as BankTransactionResult;
 
-            if (trans.isUtility) {
+            if ((trans as any).isUtility) {
                 // 공과금/고정지출 -> Ledger로 저장
                 const { error } = await supabase.from('ledger').insert({
                     user_id: userId,
                     transaction_date: toISODate(trans.date),
                     amount: trans.amount,
                     merchant_name: trans.targetName,
-                    category: classifyMerchant(trans.targetName) === '기타' ? '고정지출' : classifyMerchant(trans.targetName),
-                    sub_category: trans.subCategory,
+                    category: (trans as any).category || (classifyMerchant(trans.targetName) === '기타' ? '고정지출' : classifyMerchant(trans.targetName)),
+                    sub_category: (trans as any).subCategory,
                     image_url: imageUrl,
                     memo: `[공과금] ${trans.transactionType === 'deposit' ? '입금' : '출금'}`,
                     raw_text: JSON.stringify(data)
@@ -654,23 +758,23 @@ export async function saveUnifiedEvent(
                     sender_name: trans.transactionType === 'deposit' ? trans.targetName : null,
                     receiver_name: trans.transactionType === 'withdrawal' ? trans.targetName : null,
                     balance_after: trans.balanceAfter,
-                    category: trans.category || '인맥',
-                    sub_category: trans.subCategory,
+                    category: (trans as any).category || '인맥',
+                    sub_category: (trans as any).subCategory,
                     memo: trans.memo || (trans.transactionType === 'deposit' ? `${trans.targetName} 입금` : `${trans.targetName} 송금`),
                     raw_text: JSON.stringify(data)
                 });
                 if (error) throw error;
             }
 
-        } else if (data.type === 'TRANSFER') {
-            const transfer = data as TransferResult;
+        } else if ((data as any).type === 'TRANSFER') {
+            const transfer = data as unknown as TransferResult;
             const { error } = await supabase.from('ledger').insert({
                 user_id: userId,
                 transaction_date: new Date().toISOString(),
                 amount: transfer.amount,
                 merchant_name: transfer.senderName,
-                category: transfer.isReceived ? '수입' : '이체',
-                memo: transfer.memo || `[송금] ${transfer.isReceived ? '받음' : '보냄'}`,
+                category: (transfer as any).isReceived ? '수입' : '이체',
+                memo: (transfer as any).memo || `[송금] ${(transfer as any).isReceived ? '받음' : '보냄'}`,
                 image_url: imageUrl
             });
             if (error) throw error;
@@ -679,15 +783,15 @@ export async function saveUnifiedEvent(
             // ===================================
             // 4. 기존: 영수증 (RECEIPT) -> Ledger (Legacy support)
             // ===================================
-        } else if (data.type === 'RECEIPT') {
-            const receipt = data as ReceiptResult;
+        } else if ((data as any).type === 'RECEIPT') {
+            const receipt = data as unknown as ReceiptResult;
             const { error } = await supabase.from('ledger').insert({
                 user_id: userId,
                 transaction_date: receipt.date || new Date().toISOString(),
                 amount: receipt.amount,
                 merchant_name: receipt.merchant,
                 category: receipt.category || classifyMerchant(receipt.merchant),
-                sub_category: receipt.subCategory, // ✅ 소분류 추가
+                sub_category: (receipt as any).subCategory, // ✅ 소분류 추가
                 image_url: imageUrl,
                 memo: `[자동입력] ${receipt.category || classifyMerchant(receipt.merchant)}`
             });
@@ -720,6 +824,7 @@ export async function saveUnifiedEvent(
                 memo: `[인맥지출] 멤버: ${social.members.join(', ')}`
             });
             if (error) throw error;
+
         }
 
     } catch (e) {
@@ -830,27 +935,54 @@ export async function saveGifticon(record: GifticonRecord): Promise<void> {
     // 인맥 장부 연동이 필요하면 saveUnifiedEvent(GIFTICON, data, uri) 호출 권장
 }
 
-export interface GifticonItem {
+interface GifticonRow {
     id: string;
     product_name: string;
-    sender_name: string;
+    sender_name: string | null;
     expiry_date: string;
-    image_url: string;
+    image_url: string | null;
     status: 'available' | 'used';
     estimated_price: number;
-    barcode_number?: string;
+    barcode_number?: string | null;
 }
 
-export async function getGifticons(): Promise<GifticonItem[]> {
-    const { data, error } = await supabase
+export interface GifticonItem {
+    id: string;
+    productName: string;
+    senderName?: string;
+    expiryDate: string;
+    imageUrl?: string;
+    status: 'available' | 'used';
+    estimatedPrice: number;
+    barcodeNumber?: string;
+}
+
+export async function getGifticons(status?: GifticonItem['status']): Promise<GifticonItem[]> {
+    let query = supabase
         .from('gifticons')
         .select('*')
         .order('expiry_date', { ascending: true });
+
+    if (status) {
+        query = query.eq('status', status);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
         console.error('Error fetching gifticons:', error);
         return [];
     }
 
-    return data as GifticonItem[];
+    const rows = (data || []) as GifticonRow[];
+    return rows.map((row) => ({
+        id: row.id,
+        productName: row.product_name,
+        senderName: row.sender_name || undefined,
+        expiryDate: row.expiry_date,
+        imageUrl: row.image_url || undefined,
+        status: row.status,
+        estimatedPrice: row.estimated_price,
+        barcodeNumber: row.barcode_number || undefined,
+    }));
 }

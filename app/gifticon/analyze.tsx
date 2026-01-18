@@ -10,6 +10,9 @@ import { getCurrentOcrLogger } from '../../services/OcrLogger';
 import { SenderSelectModal } from '../../components/SenderSelectModal';
 import { Ionicons } from '@expo/vector-icons';
 import { PollService } from '../../services/PollService';
+import { classifyImageType, ImageType } from '../../services/ImageClassifier';
+import { OcrError, OcrErrorType } from '../../services/OcrErrors';
+import { scanDocument } from '../../services/DocumentScannerService';
 
 import { DataStore } from '../../services/DataStore';
 
@@ -18,6 +21,8 @@ export default function AnalyzeGifticonScreen() {
     const router = useRouter();
     const [analyzing, setAnalyzing] = useState(true);
     const [result, setResult] = useState<any>(null);
+    const [originalResult, setOriginalResult] = useState<any>(null); // Track AI vs User edits
+    const [rawText, setRawText] = useState<string>("");
     const [imageUri, setImageUri] = useState<string | null>(null);
 
     // Sender Selection State
@@ -51,6 +56,11 @@ export default function AnalyzeGifticonScreen() {
         if (data) {
             // Data passed via DataStore
             setResult(data);
+            setOriginalResult({ ...data }); // Clone for baseline
+            // Note: rawText relies on performLocalAnalysis or we need to pass it via DataStore too.
+            // For now, if passed via DataStore, we might miss RawText unless updated.
+            // Assumption: DataStore passed data implies analysis is done elsewhere.
+
             setAnalyzing(false);
             if (data.senderName && data.senderName !== "Unknown") {
                 checkSenderName(data.senderName);
@@ -60,6 +70,7 @@ export default function AnalyzeGifticonScreen() {
             try {
                 const parsed = JSON.parse(params.scannedData as string);
                 setResult(parsed);
+                setOriginalResult({ ...parsed });
                 setAnalyzing(false);
                 if (parsed.senderName && parsed.senderName !== "Unknown") {
                     checkSenderName(parsed.senderName);
@@ -80,32 +91,57 @@ export default function AnalyzeGifticonScreen() {
         console.log('[Analyze] state: analyzing=true');
         try {
             console.log('[Analyze] Starting Local OCR Analysis...', uri);
-            const rawText = await extractTextFromImage(uri);
-            console.log('[Analyze] OCR Finished. Text length:', rawText.length);
+
+            // 1. Classify Image (Screenshot vs Photo)
+            const classification = await classifyImageType(uri);
+            console.log('[Analyze] Classification:', classification.type, classification.details);
+
+            // 2. Extract Text with optimizations
+            const { text: ocrText, score: ocrScore } = await extractTextFromImage(uri, classification.type);
+            console.log('[Analyze] OCR Finished. Text length:', ocrText.length, 'Score:', ocrScore);
+
+            setRawText(ocrText); // Save raw text for feedback loop
 
             const service = new GifticonAnalysisService();
             console.log('[Analyze] Calling analyzeWithAI...');
-            const data = await service.analyzeWithAI(rawText);
+            const data = await service.analyzeWithAI(ocrText, uri, ocrScore);
             console.log('[Analyze] analyzeWithAI Returned:', JSON.stringify(data).substring(0, 100)); // Log first 100 chars
 
             setResult(data);
+            setOriginalResult({ ...data }); // Clone for baseline
             console.log('[Analyze] Result state set.');
 
             if (data.senderName && data.senderName !== "Unknown") {
                 checkSenderName(data.senderName);
             }
-        } catch (e) {
+        } catch (e: any) {
             console.error('[Analyze] Analysis failed:', e);
-            Alert.alert('분석 실패', '내용을 자동으로 인식하지 못했습니다.\n직접 입력하시겠습니까?', [
+
+            let message = '내용을 자동으로 인식하지 못했습니다.\n직접 입력하시겠습니까?';
+            let retryAvailable = false;
+
+            if (e instanceof OcrError) {
+                message = e.userMessage;
+                if (e.type === OcrErrorType.NETWORK_ERROR || e.type === OcrErrorType.TIMEOUT) {
+                    retryAvailable = true;
+                }
+            }
+
+            const buttons: any[] = [
                 {
                     text: '직접 입력',
                     onPress: () => {
-                        setResult({
+                        const fallback = {
+                            type: 'UNKNOWN',
                             productName: "상품명 입력",
                             senderName: "보낸이 입력",
                             expiryDate: new Date().toISOString().split('T')[0],
                             estimatedPrice: 0,
-                        });
+                            confidence: 0,
+                            warnings: []
+                        };
+                        setResult(fallback as any);
+                        setOriginalResult({ ...fallback } as any);
                     }
                 },
                 {
@@ -113,7 +149,16 @@ export default function AnalyzeGifticonScreen() {
                     style: 'cancel',
                     onPress: () => router.back()
                 }
-            ]);
+            ];
+
+            if (retryAvailable) {
+                buttons.splice(1, 0, {
+                    text: '다시 시도',
+                    onPress: () => performLocalAnalysis(uri)
+                });
+            }
+
+            Alert.alert('분석 이슈', message, buttons);
         } finally {
             console.log('[Analyze] Entering finally block');
             const logger = getCurrentOcrLogger();
@@ -125,32 +170,26 @@ export default function AnalyzeGifticonScreen() {
         }
     };
 
+    // ... (checkSenderName, handleOpenSenderModal, etc. unchanged)
+
     const checkSenderName = async (name: string) => {
         const found = await findPeopleByName(name);
         if (found.length > 0) {
-            // Check for exact match
             if (found.includes(name)) {
-                // Exact match found. Auto-confirm but allow change. 
-                // Currently just setting it, but marking confirmed makes UI cleaner
                 setIsSenderConfirmed(true);
             } else {
-                // Similar names found, but not exact.
                 setCandidateNames(found);
-                // We don't auto-show modal, let user click to clarify if needed, 
-                // OR we can suggest it. For now, we trust AI unless user clicks edit.
             }
         }
-        // If not found, it's a new name.
     };
 
     const handleOpenSenderModal = async () => {
-        // Prepare candidates
         if (result?.senderName) {
             const found = await findPeopleByName(result.senderName);
             setCandidateNames(found);
         } else {
             const all = await getAllPeople();
-            setCandidateNames(all.slice(0, 10)); // Show recent 10?
+            setCandidateNames(all.slice(0, 10));
         }
         setSenderModalVisible(true);
     };
@@ -166,11 +205,35 @@ export default function AnalyzeGifticonScreen() {
         setIsSenderConfirmed(true);
     };
 
+    const getConfidenceTier = (conf: number = 0) => {
+        if (conf >= 0.85) return 'A'; // Review Mode
+        if (conf >= 0.70) return 'B'; // Check Mode
+        if (conf >= 0.50) return 'C'; // Correction Mode
+        return 'D'; // Manual Mode
+    };
+
     const handleConfirm = async () => {
         if (!result) return;
         try {
-            console.log('[handleConfirm] 저장 시도:', JSON.stringify(result, null, 2));
+            const currentConf = result.confidence || 0;
+            const tier = getConfidenceTier(currentConf);
+
+            // Determine Confirmation Level
+            let level: 'quick_confirm' | 'edited_confirm' | 'manual_entry' = 'edited_confirm';
+            if (tier === 'D') level = 'manual_entry';
+            else if (tier === 'A') level = 'quick_confirm';
+
+            console.log('[handleConfirm] 저장 시도 Tier:', tier, 'Level:', level);
+
+            // 1. Save Event to DB
             await saveUnifiedEvent(result, imageUri as string);
+
+            // 2. Process Feedback Loop (Async)
+            // Import OcrFeedbackService first (I'll assume it's imported at top, wait I need to add import)
+            import('../../services/ai/OcrFeedbackService').then(({ OcrFeedbackService }) => {
+                OcrFeedbackService.processUserFeedback(originalResult, result, imageUri || undefined, rawText, level);
+            });
+
             console.log('[handleConfirm] 저장 성공!');
             Alert.alert('저장 완료', '내역이 저장되었습니다.', [
                 { text: '확인', onPress: () => router.replace('/calendar') }
@@ -252,15 +315,40 @@ export default function AnalyzeGifticonScreen() {
     // Safety check: If not analyzing but no result, don't render content (likely navigating back)
     if (!result) return <View style={styles.container} />;
 
+    const confidenceTier = getConfidenceTier(result?.confidence);
+    const isHighConfidence = confidenceTier === 'A';
+
     return (
         <View style={styles.container}>
-            <Image source={{ uri: imageUri as string }} style={styles.previewImage} resizeMode="contain" />
+            <View>
+                <Image source={{ uri: imageUri as string }} style={styles.previewImage} resizeMode="contain" />
+                <TouchableOpacity
+                    style={styles.retakeButton}
+                    onPress={async () => {
+                        const scanned = await scanDocument();
+                        if (scanned) {
+                            setImageUri(scanned);
+                            performLocalAnalysis(scanned);
+                        }
+                    }}
+                >
+                    <Ionicons name="scan-circle" size={24} color={Colors.white} />
+                    <Text style={styles.retakeButtonText}>스캔으로 다시 찍기</Text>
+                </TouchableOpacity>
+            </View>
 
             <ScrollView style={styles.resultContainerContent}>
                 <View style={styles.resultContainer}>
                     <Text style={styles.title}>
-                        {result?.type === 'INVITATION' ? '경조사 분석' : '분석 결과'}
+                        {isHighConfidence ? "이렇게 정리했어요! 😊" : "초안을 확인해 주세요"}
                     </Text>
+
+                    {confidenceTier === 'A' && (
+                        <View style={styles.tierABadge}>
+                            <Ionicons name="sparkles" size={14} color="#fff" />
+                            <Text style={styles.tierAText}>AI 분석 완료 (신뢰도 {Math.round(result.confidence * 100)}%)</Text>
+                        </View>
+                    )}
 
                     {result?.type === 'INVITATION' ? (
                         /* INVITATION UI */
@@ -455,12 +543,16 @@ export default function AnalyzeGifticonScreen() {
                     <View style={styles.disclaimerContainer}>
                         <Ionicons name="information-circle-outline" size={14} color={Colors.subText} />
                         <Text style={styles.disclaimerText}>
-                            AI 분석은 100% 정확하지 않을 수 있습니다. 저장 전 내용을 확인해주세요.
+                            {isHighConfidence
+                                ? "AI가 자동으로 작성한 초안입니다. 맞다면 저장해주세요."
+                                : "정확하지 않을 수 있습니다. 내용을 확인해 주세요."}
                         </Text>
                     </View>
 
-                    <TouchableOpacity style={styles.button} onPress={handleConfirm}>
-                        <Text style={styles.buttonText}>저장하기</Text>
+                    <TouchableOpacity style={[styles.button, isHighConfidence && styles.highConfButton]} onPress={handleConfirm}>
+                        <Text style={styles.buttonText}>
+                            {isHighConfidence ? "이대로 저장하기" : "확인 및 저장"}
+                        </Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity style={styles.pollButton} onPress={handleCreatePoll}>
@@ -512,11 +604,47 @@ const styles = StyleSheet.create({
         height: '45%', // Reduced from 100% to allow space for content
         backgroundColor: Colors.navy, // Fallback background
     },
+    retakeButton: {
+        position: 'absolute',
+        bottom: 20,
+        right: 20,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 25,
+        gap: 8,
+        zIndex: 10,
+    },
+    retakeButtonText: {
+        color: Colors.white,
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 14,
+    },
     resultContainerContent: {
         flex: 1,
         marginTop: -24, // Slight overlap for design effect
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
+    },
+    tierABadge: {
+        flexDirection: 'row',
+        backgroundColor: Colors.green,
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        borderRadius: 16,
+        alignSelf: 'center',
+        marginBottom: 24,
+        gap: 6
+    },
+    tierAText: {
+        color: '#fff',
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 13
+    },
+    highConfButton: {
+        backgroundColor: Colors.green, // Highlight distinct color for high confidence
     },
     resultContainer: {
         backgroundColor: Colors.background, // Changed to solid background to cover image

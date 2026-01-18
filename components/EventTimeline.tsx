@@ -10,9 +10,11 @@ interface EventTimelineProps {
     events?: EventRecord[];
     title?: string;
     onEventsChange?: () => void; // DB 변경 시 부모에게 알림
+    onEventPress?: (event: EventRecord) => void;
+    onEventEdit?: (event: EventRecord) => void;
 }
 
-export function EventTimeline({ events: propEvents, title, onEventsChange }: EventTimelineProps) {
+export function EventTimeline({ events: propEvents, title, onEventsChange, onEventPress, onEventEdit }: EventTimelineProps) {
     const router = useRouter();
     const [stateEvents, setStateEvents] = useState<EventRecord[]>([]);
     const [loading, setLoading] = useState(propEvents === undefined);
@@ -87,8 +89,9 @@ export function EventTimeline({ events: propEvents, title, onEventsChange }: Eve
                             }
                             if (onEventsChange) onEventsChange();
                             Alert.alert('삭제 완료', '항목이 삭제되었습니다.');
-                        } catch (e) {
-                            Alert.alert('오류', '삭제에 실패했습니다.');
+                        } catch (e: any) {
+                            console.error('Delete error:', e);
+                            Alert.alert('오류', e.message || '삭제에 실패했습니다.');
                         }
                     }
                 }
@@ -167,64 +170,75 @@ export function EventTimeline({ events: propEvents, title, onEventsChange }: Eve
                             </View>
 
                             <View style={styles.cardWrapper}>
-                                <Card style={[styles.eventCard, isNext && styles.activeEventCard]}>
-                                    <View style={styles.cardHeader}>
-                                        <View style={[styles.badgeContainer, { flex: 1, marginRight: 8 }]}>
-                                            <Text style={[styles.typeBadge, isNext ? styles.activeTypeBadge : styles.inactiveTypeBadge]}>
-                                                {event.source === 'bank_transactions'
-                                                    ? (event.isReceived ? '💰 입금' : '💸 송금')
-                                                    : (event.source === 'ledger' ? '🛒 결제' : event.type)}
-                                            </Text>
-                                            <Text style={[styles.relationText, { flex: 1 }]} numberOfLines={1} ellipsizeMode="tail">
-                                                {event.relation}
-                                            </Text>
-                                        </View>
-                                        <View style={styles.headerActions}>
-                                            <Text style={[styles.dDay, isNext && styles.activeDDay]}>{dDay}</Text>
-                                            <TouchableOpacity
-                                                style={styles.deleteButton}
-                                                onPress={() => handleDelete(event)}
-                                            >
-                                                <Ionicons name="trash-outline" size={20} color="#FF6B6B" />
-                                            </TouchableOpacity>
-                                        </View>
-                                    </View>
-
-                                    <View style={styles.titleRow}>
-                                        <Text style={styles.eventTitle}>{event.name}</Text>
-
-                                        {/* ✅ 송금 완료 체크박스 - 경조사(wedding, funeral, birthday)일 때만 표시 */}
-                                        {!event.isReceived && ['wedding', 'funeral', 'birthday'].includes(event.type) && (
-                                            <TouchableOpacity
-                                                style={[styles.checkButton, event.isPaid && styles.checkedButton]}
-                                                onPress={() => togglePayment(event)}
-                                            >
-                                                <Ionicons
-                                                    name={event.isPaid ? "checkmark-circle" : "ellipse-outline"}
-                                                    size={20}
-                                                    color={event.isPaid ? Colors.white : Colors.subText}
-                                                />
-                                                <Text style={[styles.checkText, event.isPaid && styles.checkedText]}>
-                                                    {event.isPaid ? '송금완료' : '송금예정'}
+                                <TouchableOpacity
+                                    activeOpacity={onEventPress ? 0.7 : 1}
+                                    onPress={() => onEventPress && onEventPress(event)}
+                                >
+                                    <Card style={[styles.eventCard, isNext && styles.activeEventCard]}>
+                                        <View style={styles.cardHeader}>
+                                            <View style={[styles.badgeContainer, { flex: 1, marginRight: 8 }]}>
+                                                <Text style={[styles.typeBadge, isNext ? styles.activeTypeBadge : styles.inactiveTypeBadge]}>
+                                                    {event.source === 'bank_transactions'
+                                                        ? (event.isReceived ? '💰 입금' : '💸 송금')
+                                                        : (event.source === 'ledger' ? '🛒 결제' : event.type)}
                                                 </Text>
-                                            </TouchableOpacity>
-                                        )}
-                                    </View>
+                                                <Text style={[styles.relationText, { flex: 1 }]} numberOfLines={1} ellipsizeMode="tail">
+                                                    {event.relation}
+                                                </Text>
+                                            </View>
+                                            <View style={styles.headerActions}>
+                                                <Text style={[styles.dDay, isNext && styles.activeDDay]}>{dDay}</Text>
+                                                <TouchableOpacity
+                                                    style={[styles.deleteButton, { marginRight: 8 }]}
+                                                    onPress={() => onEventEdit && onEventEdit(event)}
+                                                >
+                                                    <Ionicons name="pencil-outline" size={20} color={Colors.text} />
+                                                </TouchableOpacity>
+                                                <TouchableOpacity
+                                                    style={styles.deleteButton}
+                                                    onPress={() => handleDelete(event)}
+                                                >
+                                                    <Ionicons name="trash-outline" size={20} color="#FF6B6B" />
+                                                </TouchableOpacity>
+                                            </View>
+                                        </View>
 
-                                    {/* ✅ 추가 정보 (금액, 메모) */}
-                                    <View style={styles.detailsContainer}>
-                                        {event.amount !== undefined && event.amount > 0 && (
-                                            <Text style={styles.amountText}>
-                                                {event.amount.toLocaleString()}원
-                                            </Text>
-                                        )}
-                                        {event.memo && (
-                                            <Text style={styles.memoText} numberOfLines={2}>
-                                                {event.memo.split('\n')[0]}
-                                            </Text>
-                                        )}
-                                    </View>
-                                </Card>
+                                        <View style={styles.titleRow}>
+                                            <Text style={styles.eventTitle}>{event.name}</Text>
+
+                                            {/* ✅ 송금 완료 체크박스 - 경조사(wedding, funeral, birthday)일 때만 표시 */}
+                                            {!event.isReceived && ['wedding', 'funeral', 'birthday'].includes(event.type) && (
+                                                <TouchableOpacity
+                                                    style={[styles.checkButton, event.isPaid && styles.checkedButton]}
+                                                    onPress={() => togglePayment(event)}
+                                                >
+                                                    <Ionicons
+                                                        name={event.isPaid ? "checkmark-circle" : "ellipse-outline"}
+                                                        size={20}
+                                                        color={event.isPaid ? Colors.white : Colors.subText}
+                                                    />
+                                                    <Text style={[styles.checkText, event.isPaid && styles.checkedText]}>
+                                                        {event.isPaid ? '송금완료' : '송금예정'}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            )}
+                                        </View>
+
+                                        {/* ✅ 추가 정보 (금액, 메모) */}
+                                        <View style={styles.detailsContainer}>
+                                            {event.amount !== undefined && event.amount > 0 && (
+                                                <Text style={styles.amountText}>
+                                                    {event.amount.toLocaleString()}원
+                                                </Text>
+                                            )}
+                                            {event.memo && (
+                                                <Text style={styles.memoText} numberOfLines={2}>
+                                                    {event.memo.split('\n')[0]}
+                                                </Text>
+                                            )}
+                                        </View>
+                                    </Card>
+                                </TouchableOpacity>
                             </View>
                         </View>
                     );
@@ -412,7 +426,6 @@ const styles = StyleSheet.create({
         fontFamily: 'Pretendard-Bold',
         fontSize: 15,
     },
-    // ✅ 체크박스 스타일
     checkButton: {
         flexDirection: 'row',
         alignItems: 'center',

@@ -5,16 +5,23 @@ import { Colors } from '../constants/Colors'; // Direct import since we might no
 import { useTheme } from '../contexts/ThemeContext';
 import { supabase } from '../services/supabase';
 
+interface OcrContext {
+    rawText?: string;
+    classifiedType?: string;
+    classifiedData?: any;
+}
+
 interface FeedbackModalProps {
     visible: boolean;
     onClose: () => void;
+    ocrContext?: OcrContext; // OCR 결과 화면에서 전달되는 컨텍스트
 }
 
-type FeedbackType = 'bug' | 'feature' | 'other';
+type FeedbackType = 'bug' | 'feature' | 'ocr' | 'other';
 
-export function FeedbackModal({ visible, onClose }: FeedbackModalProps) {
+export function FeedbackModal({ visible, onClose, ocrContext }: FeedbackModalProps) {
     const { colors, isDark } = useTheme();
-    const [type, setType] = useState<FeedbackType>('feature');
+    const [type, setType] = useState<FeedbackType>(ocrContext ? 'ocr' : 'feature');
     const [content, setContent] = useState('');
     const [loading, setLoading] = useState(false);
 
@@ -33,7 +40,8 @@ export function FeedbackModal({ visible, onClose }: FeedbackModalProps) {
                 .insert({
                     user_id: user?.id,
                     type,
-                    content
+                    content,
+                    metadata: ocrContext ? JSON.stringify(ocrContext) : null
                 });
 
             if (error) throw error;
@@ -89,6 +97,7 @@ export function FeedbackModal({ visible, onClose }: FeedbackModalProps) {
 
                     <Text style={[styles.label, { color: colors.text }]}>어떤 종류의 의견인가요?</Text>
                     <View style={styles.typeContainer}>
+                        {ocrContext && <TypeButton label="🔍 AI 분류 개선" value="ocr" />}
                         <TypeButton label="✨ 기능 제안" value="feature" />
                         <TypeButton label="🐛 버그 신고" value="bug" />
                         <TypeButton label="💬 기타" value="other" />
@@ -98,7 +107,7 @@ export function FeedbackModal({ visible, onClose }: FeedbackModalProps) {
                     <TextInput
                         style={[styles.input, { backgroundColor: colors.card, color: colors.text, borderColor: colors.border }]}
                         multiline
-                        placeholder="자유롭게 의견을 남겨주세요."
+                        placeholder={ocrContext ? "어떻게 분류되어야 하나요? (예: 이건 보험료 납부인데 입금으로 분류됐어요)" : "자유롭게 의견을 남겨주세요."}
                         placeholderTextColor={colors.subText}
                         value={content}
                         onChangeText={setContent}

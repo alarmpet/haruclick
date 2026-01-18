@@ -14,6 +14,9 @@ export default function SettingsScreen() {
     const router = useRouter();
     const { isDark, setTheme, colors } = useTheme();
     const [userEmail, setUserEmail] = useState<string | null>(null);
+    const [userName, setUserName] = useState<string | null>(null);
+    const [joinedDays, setJoinedDays] = useState<number>(0);
+    const [totalScans, setTotalScans] = useState<number>(0);
     const [calendarSync, setCalendarSync] = useState(true);
     const [feedbackVisible, setFeedbackVisible] = useState(false);
 
@@ -21,8 +24,37 @@ export default function SettingsScreen() {
         supabase.auth.getUser().then(({ data: { user } }) => {
             if (user) {
                 setUserEmail(user.email || '이메일 없음');
+                // 이메일에서 닉네임 추출 (@ 앞부분)
+                const emailName = user.email?.split('@')[0] || '사용자';
+                setUserName(emailName);
+
+                // 가입일 계산
+                if (user.created_at) {
+                    const createdDate = new Date(user.created_at);
+                    const today = new Date();
+                    const diffTime = Math.abs(today.getTime() - createdDate.getTime());
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    setJoinedDays(diffDays);
+                }
             }
         });
+
+        // 총 스캔 횟수 가져오기 (events 테이블에서 조회)
+        const fetchScanCount = async () => {
+            try {
+                const { data: { user } } = await supabase.auth.getUser();
+                if (user) {
+                    const { count } = await supabase
+                        .from('events')
+                        .select('*', { count: 'exact', head: true })
+                        .eq('user_id', user.id);
+                    setTotalScans(count || 0);
+                }
+            } catch (e) {
+                console.log('Failed to fetch scan count:', e);
+            }
+        };
+        fetchScanCount();
 
         // 캘린더 연동 설정 불러오기
         AsyncStorage.getItem(CALENDAR_SYNC_KEY).then((value) => {
@@ -95,9 +127,26 @@ export default function SettingsScreen() {
                     <View style={[styles.avatar, { backgroundColor: Colors.navy }]}>
                         <Ionicons name="person" size={40} color={Colors.white} />
                     </View>
-                    <View>
-                        <Text style={[styles.userName, { color: colors.text }]}>내 프로필</Text>
+                    <View style={{ flex: 1 }}>
+                        <Text style={[styles.userName, { color: colors.text }]}>{userName || '사용자'}님</Text>
                         <Text style={[styles.userEmail, { color: colors.subText }]}>{userEmail || '로그인 정보 없음'}</Text>
+                    </View>
+                </View>
+
+                {/* 프로필 통계 */}
+                <View style={styles.profileStats}>
+                    <View style={styles.profileStatItem}>
+                        <Ionicons name="calendar-outline" size={18} color={Colors.orange} />
+                        <Text style={[styles.profileStatText, { color: colors.subText }]}>
+                            가입 {joinedDays}일째
+                        </Text>
+                    </View>
+                    <View style={styles.profileStatDivider} />
+                    <View style={styles.profileStatItem}>
+                        <Ionicons name="scan-outline" size={18} color={Colors.orange} />
+                        <Text style={[styles.profileStatText, { color: colors.subText }]}>
+                            총 스캔 {totalScans}건
+                        </Text>
                     </View>
                 </View>
             </View>
@@ -263,5 +312,29 @@ const styles = StyleSheet.create({
         fontSize: 12,
         paddingHorizontal: 20,
         paddingBottom: 12,
+    },
+    profileStats: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginTop: 16,
+        paddingTop: 16,
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(0,0,0,0.05)',
+    },
+    profileStatItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 16,
+    },
+    profileStatText: {
+        fontFamily: 'Pretendard-Medium',
+        fontSize: 13,
+    },
+    profileStatDivider: {
+        width: 1,
+        height: 16,
+        backgroundColor: 'rgba(0,0,0,0.1)',
     },
 });

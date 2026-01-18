@@ -10,6 +10,7 @@ interface EventDetailModalProps {
     event: any; // Using any for flexibility with mock data
     onClose: () => void;
     onDelete?: (event: any) => void;
+    onEdit?: (event: any) => void; // New prop for edit
 }
 
 // 한국 주요 페이 앱 정보
@@ -45,14 +46,18 @@ const PAY_APPS = [
     },
 ];
 
-export function EventDetailModal({ visible, event, onClose, onDelete }: EventDetailModalProps) {
+export function EventDetailModal({ visible, event, onClose, onDelete, onEdit }: EventDetailModalProps) {
     const router = useRouter();
 
     if (!event) return null;
 
     // derived state for demo
     const isPaid = false;
-    const amount = event.amount || 100000;
+    // ✅ 금액이 없으면 0으로 처리 (기존에는 100000원 기본값이었음)
+    const amount = event.amount || 0;
+
+    // ✅ 경조사 여부 확인
+    const isCeremony = (event.category === 'ceremony' || event.type === 'INVITATION' || ['wedding', 'funeral', 'birthday'].includes(event.type)) && event.type !== 'APPOINTMENT';
 
     // 날짜 포맷 함수
     const formatDate = (dateStr: string) => {
@@ -66,6 +71,7 @@ export function EventDetailModal({ visible, event, onClose, onDelete }: EventDet
         return `${year}.${month}.${day} (${dayOfWeek})`;
     };
 
+    // ... (keep handlePayment function as is) ...
     // 페이 앱 실행
     const handlePayment = async (payApp: typeof PAY_APPS[0]) => {
         const url = payApp.url(amount);
@@ -140,6 +146,11 @@ export function EventDetailModal({ visible, event, onClose, onDelete }: EventDet
                             <Text style={styles.modalTitle}>{event.name || event.topText}</Text>
                         </View>
                         <View style={styles.headerRight}>
+                            {onEdit && (
+                                <TouchableOpacity onPress={() => onEdit(event)} style={styles.iconButton}>
+                                    <Ionicons name="pencil-outline" size={24} color={Colors.text} />
+                                </TouchableOpacity>
+                            )}
                             {onDelete && event.source !== 'external' && (
                                 <TouchableOpacity onPress={() => {
                                     Alert.alert(
@@ -196,48 +207,90 @@ export function EventDetailModal({ visible, event, onClose, onDelete }: EventDet
                                 </View>
                             </>
                         ) : (
-                            /* 2. 경조사/일정인 경우 (상세 뷰) */
+                            /* 2. 경조사/일정인 경우 */
                             <>
-                                {/* Target Info */}
-                                <View style={styles.infoRow}>
-                                    <View style={styles.labelBadge}>
-                                        <Text style={styles.labelText}>관계</Text>
+                                {/* Pay Buttons - Only for CEREMONY type events (Removed duplicate from top) */}
+
+                                {/* Event Details Section */}
+                                <View style={styles.section}>
+                                    <Text style={styles.sectionTitle}>상세 정보</Text>
+
+                                    {/* Source Indicator */}
+                                    <View style={styles.row}>
+                                        <Ionicons name="information-circle-outline" size={20} color="#888" />
+                                        <Text style={styles.rowText}>
+                                            {event.source === 'ledger' ? '가계부 내역' :
+                                                event.source === 'bank_transactions' ? '은행 내역' :
+                                                    isCeremony ? '경조사/초대장' : '캘린더 일정'}
+                                        </Text>
                                     </View>
-                                    <Text style={styles.valueText}>{event.relation || '지인'}</Text>
+
+                                    {/* Amount - Show for all if non-zero */}
+                                    {event.amount !== 0 && event.amount !== undefined && (
+                                        <View style={styles.row}>
+                                            <Ionicons name="cash-outline" size={20} color="#888" />
+                                            <Text style={styles.rowText}>
+                                                {event.amount?.toLocaleString()}원
+                                                {event.isReceived !== undefined ? (event.isReceived ? ' (수입)' : ' (지출)') : ''}
+                                            </Text>
+                                        </View>
+                                    )}
+
+                                    {/* Location */}
+                                    {event.location && (
+                                        <View style={styles.row}>
+                                            <Ionicons name="location-outline" size={20} color="#888" />
+                                            <Text style={styles.rowText}>{event.location}</Text>
+                                        </View>
+                                    )}
+
+                                    {/* Memo / Reason */}
+                                    {(event.memo || event.recommendationReason) && (
+                                        <View style={styles.row}>
+                                            <Ionicons name="document-text-outline" size={20} color="#888" />
+                                            <Text style={styles.rowText}>{event.memo || event.recommendationReason}</Text>
+                                        </View>
+                                    )}
                                 </View>
 
-                                {/* AI Recommendation */}
-                                <View style={styles.recommendationBox}>
-                                    <View style={styles.aiHeader}>
-                                        <Ionicons name="sparkles" size={16} color={Colors.orange} />
-                                        <Text style={styles.aiTitle}>하루클릭 분석 결과</Text>
+                                {/* AI Recommendation - Only for Ceremony */}
+                                {isCeremony && (
+                                    <View style={styles.recommendationBox}>
+                                        <View style={styles.aiHeader}>
+                                            <Ionicons name="sparkles" size={16} color={Colors.orange} />
+                                            <Text style={styles.aiTitle}>하루클릭 분석 결과</Text>
+                                        </View>
+                                        <Text style={styles.aiAmount}>{amount.toLocaleString()}원</Text>
+                                        <Text style={styles.aiReason}>
+                                            {event.memo?.includes('[AI 스캔]') ? "AI가 청첩장을 분석하여 추천한 금액입니다." : "관계와 행사 종류를 고려한 추천 금액입니다."}
+                                        </Text>
                                     </View>
-                                    <Text style={styles.aiAmount}>{amount.toLocaleString()}원</Text>
-                                    <Text style={styles.aiReason}>
-                                        {event.memo?.includes('[AI 스캔]') ? "AI가 청첩장을 분석하여 추천한 금액입니다." : "관계와 행사 종류를 고려한 추천 금액입니다."}
-                                    </Text>
-                                </View>
+                                )}
 
-                                {/* Location */}
-                                <TouchableOpacity style={styles.locationRow} onPress={() => event.location && Linking.openURL(`https://map.naver.com/v5/search/${encodeURIComponent(event.location)}`)}>
-                                    <Ionicons name="location-outline" size={20} color={Colors.navy} />
-                                    <Text style={styles.locationText}>{event.location || '위치 정보 없음'}</Text>
-                                    <Ionicons name="chevron-forward" size={16} color="#BDC5CC" />
-                                </TouchableOpacity>
+                                {/* Location Link */}
+                                {event.location && (
+                                    <TouchableOpacity style={styles.locationRow} onPress={() => event.location && Linking.openURL(`https://map.naver.com/v5/search/${encodeURIComponent(event.location)}`)}>
+                                        <Ionicons name="location-outline" size={20} color={Colors.navy} />
+                                        <Text style={styles.locationText}>{event.location}</Text>
+                                        <Ionicons name="chevron-forward" size={16} color="#BDC5CC" />
+                                    </TouchableOpacity>
+                                )}
 
-                                {/* Payment Checkbox */}
-                                <TouchableOpacity style={styles.checkRow}>
-                                    <Ionicons name={event.isPaid ? "checkbox" : "square-outline"} size={24} color={event.isPaid ? Colors.navy : '#BDC5CC'} />
-                                    <Text style={[styles.checkText, event.isPaid && styles.checkedText]}>
-                                        {event.isPaid ? '송금 완료' : '아직 송금하지 않았어요'}
-                                    </Text>
-                                </TouchableOpacity>
+                                {/* Payment Checkbox - Only for Ceremony */}
+                                {isCeremony && (
+                                    <TouchableOpacity style={styles.checkRow}>
+                                        <Ionicons name={event.isPaid ? "checkbox" : "square-outline"} size={24} color={event.isPaid ? Colors.navy : '#BDC5CC'} />
+                                        <Text style={[styles.checkText, event.isPaid && styles.checkedText]}>
+                                            {event.isPaid ? '송금 완료' : '아직 송금하지 않았어요'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                )}
                             </>
                         )}
                     </View>
 
                     {/* Footer Actions (경조사일 때만 표시) */}
-                    {!(event.category === 'expense' || event.type === 'receipt' || event.type === 'transfer') && !isPaid && (
+                    {isCeremony && !isPaid && (
                         <View style={styles.footer}>
                             <View style={styles.actionRow}>
                                 <TouchableOpacity style={styles.secondaryButton} onPress={handleCalendarSync}>
@@ -435,6 +488,51 @@ const styles = StyleSheet.create({
         color: Colors.text,
         marginTop: 8,
         marginBottom: 4,
+    },
+    payContainer: {
+        flexDirection: 'row',
+        gap: 8,
+        marginTop: 8,
+        marginBottom: 16,
+    },
+    payIcon: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#fff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 4,
+    },
+    payIconText: {
+        fontSize: 18,
+    },
+    payText: {
+        fontFamily: 'Pretendard-Medium',
+        fontSize: 12,
+        color: '#fff',
+    },
+    section: {
+        marginTop: 16,
+        gap: 12,
+    },
+    sectionTitle: {
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 14,
+        color: Colors.text,
+        marginBottom: 4,
+    },
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    rowText: {
+        flex: 1,
+        fontFamily: 'Pretendard-Regular',
+        fontSize: 15,
+        color: Colors.text,
+        lineHeight: 20,
     },
     payRow: {
         flexDirection: 'row',

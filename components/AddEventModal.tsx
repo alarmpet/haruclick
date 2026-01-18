@@ -26,7 +26,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import SpinnerTimePicker from './SpinnerTimePicker';
 // import { Colors } from '../constants/Colors'; // Removed duplicate
-import { saveUnifiedEvent } from '../services/supabase';
+import { saveUnifiedEvent, updateUnifiedEvent } from '../services/supabase';
 import { RecommendationEngine, RecommendationResult } from '../services/RecommendationEngine';
 
 const { width } = Dimensions.get('window');
@@ -37,6 +37,7 @@ interface AddEventModalProps {
     onSaved?: () => void;
     initialDate?: string;
     initialCategory?: 'ceremony' | 'todo' | 'schedule';
+    editEvent?: any; // EventRecord type but using any for flexibility
 }
 
 // 카테고리 탭
@@ -44,6 +45,7 @@ const CATEGORY_TABS = [
     { key: 'schedule', label: '일정', icon: 'calendar' },
     { key: 'todo', label: '할 일', icon: 'checkbox' },
     { key: 'ceremony', label: '경조사', icon: 'heart' },
+    { key: 'expense', label: '가계부', icon: 'receipt' },
 ];
 
 // 경조사 세부 타입
@@ -59,6 +61,12 @@ const RELATIONS = [
     '직계가족', '형제자매', '가족', '절친', '친한 친구',
     '직장 동료', '대학 동기', '지인', '거래처'
 ];
+
+// 가계부 카테고리
+const LEDGER_CATEGORIES = {
+    expense: ['식비', '교통/차량', '쇼핑', '생활', '주거/통신', '의료/건강', '금융', '문화/여가', '교육', '경조사', '기타'],
+    income: ['월급', '용돈', '이월', '자산인출', '금융수입', '기타']
+};
 
 // ✅ 현재 시간 기준 가장 가까운 정시 계산
 const getNearestHour = () => {
@@ -77,8 +85,8 @@ const getEndHour = (startTime: string) => {
     return nextHour.toString().padStart(2, '0') + ':00';
 };
 
-export function AddEventModal({ visible, onClose, onSaved, initialDate, initialCategory = 'schedule' }: AddEventModalProps) {
-    const [category, setCategory] = useState<'ceremony' | 'todo' | 'schedule'>(initialCategory);
+export function AddEventModal({ visible, onClose, onSaved, initialDate, initialCategory = 'schedule', editEvent }: AddEventModalProps) {
+    const [category, setCategory] = useState<'ceremony' | 'todo' | 'schedule' | 'expense'>(initialCategory);
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(initialDate || new Date().toISOString().split('T')[0]);
     const [isAllDay, setIsAllDay] = useState(false); // ✅ 기본값 OFF (구글 캘린더처럼)
@@ -106,10 +114,14 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
     const [ceremonyType, setCeremonyType] = useState('wedding');
 
     const [relation, setRelation] = useState('친한 친구');
-    const [amount, setAmount] = useState('100000');
+    const [amount, setAmount] = useState('0'); // Changed default to 0 to avoid confusion
     // New states
     const [recurrence, setRecurrence] = useState<'none' | 'daily' | 'weekly' | 'monthly' | 'yearly'>('none');
     const [selectedAlarm, setSelectedAlarm] = useState<number | null>(null);
+
+    // Ledger specific
+    const [ledgerType, setLedgerType] = useState<'income' | 'expense'>('expense');
+    const [ledgerCategory, setLedgerCategory] = useState('식비');
 
     // ✅ 커스텀 모달 상태 (Android Alert 제한 해결)
     const [showRecurrenceModal, setShowRecurrenceModal] = useState(false);
@@ -138,9 +150,46 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
     const [recommendation, setRecommendation] = useState<RecommendationResult | null>(null);
 
     useEffect(() => {
-        if (initialDate) setDate(initialDate);
-        if (initialCategory) setCategory(initialCategory);
-    }, [initialDate, initialCategory, visible]);
+        if (visible) {
+            if (editEvent) {
+                // Edit Mode: Pre-fill data
+                setTitle(editEvent.name || '');
+                setCategory(editEvent.category || 'schedule');
+                setDate(editEvent.date || new Date().toISOString().split('T')[0]);
+                setLocation(editEvent.location || '');
+                setMemo(editEvent.memo || '');
+                setAmount(editEvent.amount ? String(editEvent.amount) : '0');
+
+                // 경조사 fields
+                setRelation(editEvent.relation || '친한 친구');
+                const foundType = CEREMONY_TYPES.find(t => t.key === editEvent.type);
+                setCeremonyType(foundType ? foundType.key : 'wedding');
+
+                // Time fields
+                // Check both camelCase and snake_case just in case, though DB is likely snake_case
+                if (editEvent.start_time || editEvent.startTime) {
+                    setStartTime(editEvent.start_time || editEvent.startTime);
+                    setIsAllDay(false);
+                }
+                if (editEvent.end_time || editEvent.endTime) {
+                    setEndTime(editEvent.end_time || editEvent.endTime);
+                }
+
+                // Ledger fields
+                if (editEvent.category === 'expense' || editEvent.category === 'income' || editEvent.source === 'ledger') {
+                    setCategory('expense');
+                    setLedgerType(editEvent.isReceived ? 'income' : 'expense');
+                    // Try to finding mapped category or default
+                    setLedgerCategory(editEvent.sub_category || editEvent.type || '기타');
+                }
+            } else {
+                // Create Mode: Reset to defaults or initial props
+                resetForm();
+                if (initialDate) setDate(initialDate);
+                if (initialCategory) setCategory(initialCategory);
+            }
+        }
+    }, [visible, editEvent]); // Removed initialDate/Category from dependency to prevent loop, usually stable props
 
     // 경조사: 관계/타입 변경 시 추천 금액
     useEffect(() => {
@@ -164,34 +213,129 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
 
         setSaving(true);
         try {
-            if (category === 'ceremony') {
-                await saveUnifiedEvent({
-                    type: 'INVITATION',
-                    eventType: ceremonyType as 'wedding' | 'funeral' | 'birthday' | 'other',
-                    eventDate: date,
-                    eventLocation: location || undefined,
-                    mainName: title,
-                    senderName: title,
-                    recommendedAmount: parseInt(amount) || 100000,
-                    recommendationReason: `${relation} 관계`,
-                });
+            if (editEvent) {
+                // Update Mode
+                const updates: any = {
+                    name: title,
+                    event_date: date,
+                    memo: memo,
+                    amount: parseInt(amount) || 0,
+                };
+
+                // Add specific fields based on category/source
+                if (category === 'ceremony') {
+                    updates.type = ceremonyType;
+                    updates.relation = relation;
+                    updates.location = location;
+                    updates.start_time = isAllDay ? null : startTime;
+                    updates.end_time = isAllDay ? null : endTime;
+                    updates.is_all_day = isAllDay;
+                } else {
+                    updates.type = 'APPOINTMENT'; // Explicitly set type to APPOINTMENT for schedule/todo
+                    updates.category = category;   // Explicitly update category
+                    updates.location = location;
+                    updates.start_time = isAllDay ? null : startTime;
+                    updates.end_time = isAllDay ? null : endTime;
+                }
+
+                if (category === 'expense') {
+                    updates.amount = parseInt(amount) || 0;
+                    updates.type = ledgerCategory; // Store category in type or dedicated field if available
+                    updates.category = 'expense'; // Always expense category for DB, handled by isReceived
+                    updates.is_received = ledgerType === 'income';
+                }
+
+                // Ledger specific
+                if (editEvent.source === 'ledger') {
+                    updates.transaction_date = date;
+                    updates.merchant_name = title;
+                    updates.category = 'expense';
+                } else if (editEvent.source === 'bank_transactions') {
+                    updates.transaction_date = date;
+                }
+
+                await updateUnifiedEvent(editEvent, updates);
+
+                Alert.alert('수정 완료', '수정되었습니다.', [{
+                    text: '확인',
+                    onPress: () => {
+                        onClose();
+                        onSaved?.();
+                    }
+                }]);
+
             } else {
-                await saveUnifiedEvent({
-                    type: 'INVITATION',
-                    eventType: 'other',
-                    eventDate: date,
-                    eventLocation: location || undefined,
-                    mainName: title,
-                    senderName: title,
-                    recommendedAmount: 0,
-                    recommendationReason: category === 'todo' ? '할일' : '일정',
-                }, undefined, {
-                    recurrence: recurrence,
-                    alarmMinutes: selectedAlarm !== null ? selectedAlarm : undefined,
-                    startTime: isAllDay ? undefined : startTime,
-                    endTime: isAllDay ? undefined : endTime,
-                    isAllDay: isAllDay
-                });
+                // Create Mode
+                if (category === 'ceremony') {
+                    await saveUnifiedEvent({
+                        type: 'INVITATION',
+                        eventType: ceremonyType as 'wedding' | 'funeral' | 'birthday' | 'event',
+                        eventDate: date,
+                        eventLocation: location || undefined,
+                        mainName: title,
+                        senderName: title,
+                        recommendedAmount: parseInt(amount) || 100000,
+                        recommendationReason: `${relation} 관계`,
+                        confidence: 1.0,
+                        evidence: [],
+                        warnings: [],
+                    }, undefined, {
+                        startTime: isAllDay ? undefined : startTime,
+                        endTime: isAllDay ? undefined : endTime,
+                        isAllDay: isAllDay,
+                    });
+                } else if (category === 'expense') {
+                    const parsedAmount = parseInt(amount) || 0;
+                    const commonData = {
+                        confidence: 1.0,
+                        evidence: [],
+                        warnings: [],
+                        date: date,
+                    };
+
+                    if (ledgerType === 'income') {
+                        await saveUnifiedEvent({
+                            ...commonData,
+                            type: 'SOCIAL',
+                            amount: parsedAmount,
+                            location: title || '수입',
+                            members: [], // Required for SocialResult
+                        } as any, undefined, { // Using any cast temporarily if strict type checking fails due to discriminated union complexity, or cleaner: as SocialResult
+                            category: 'expense',
+                        });
+                    } else {
+                        await saveUnifiedEvent({
+                            ...commonData,
+                            type: 'STORE_PAYMENT',
+                            merchant: title || '지출',
+                            amount: parsedAmount,
+                            category: ledgerCategory,
+                        } as any, undefined, {
+                            category: 'expense',
+                        });
+                    }
+                } else {
+                    await saveUnifiedEvent({
+                        type: 'APPOINTMENT', // Fixed: Was ‘INVITATION’ causing schedule events to appear as ceremonies
+                        // eventType property removed as it is not part of AppointmentResult
+                        title: title, // AppointmentResult uses title
+                        date: date, // ✅ Pass selected date explicitly
+                        location: location || '',
+                        mainName: title, // Keep for compatibility if needed by saveUnifiedEvent mapping
+                        senderName: title,
+                        recommendedAmount: 0,
+                        recommendationReason: category === 'todo' ? '할일' : '일정',
+                        confidence: 1.0,
+                        evidence: [],
+                        warnings: [],
+                    } as any, undefined, {
+                        recurrence: recurrence,
+                        alarmMinutes: selectedAlarm !== null ? selectedAlarm : undefined,
+                        startTime: isAllDay ? undefined : startTime,
+                        endTime: isAllDay ? undefined : endTime,
+                        isAllDay: isAllDay
+                    });
+                }
             }
 
             Alert.alert('저장 완료', '저장되었습니다.', [{
@@ -224,7 +368,13 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
         setAmount('100000');
         setRecurrence('none');
         setSelectedAlarm(null);
+        setSelectedAlarm(null);
         setIsEndTimeManuallySet(false);
+        setLedgerType('expense');
+        setLedgerCategory('식비');
+        // setAmount('0'); // Removed duplicate setAmount - handled above or specific to category logic if needed, but '100000' is default for ceremony which is safe reset
+
+        // Do not reset editEvent as it is a prop, checking it in useEffect handles switch
     };
 
 
@@ -323,6 +473,32 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             <TouchableOpacity style={styles.dateButton}>
                 <Text style={styles.dateText}>{formatDate(date)}</Text>
             </TouchableOpacity>
+
+            {/* 시간 */}
+            <View style={styles.row}>
+                <Ionicons name="time-outline" size={24} color="#888" />
+                <Text style={styles.rowText}>종일</Text>
+                <Switch
+                    value={isAllDay}
+                    onValueChange={setIsAllDay}
+                    trackColor={{ false: '#444', true: '#5B7FBF' }}
+                    thumbColor={isAllDay ? '#fff' : '#ccc'}
+                />
+            </View>
+
+            <TouchableOpacity style={styles.row} onPress={() => !isAllDay && openTimePicker('start')}>
+                <View style={{ width: 24 }} />
+                <Text style={styles.rowText}>{formatDate(date)}</Text>
+                {!isAllDay && <Text style={styles.timeText}>{startTime}</Text>}
+            </TouchableOpacity>
+
+            {!isAllDay && (
+                <TouchableOpacity style={styles.row} onPress={() => openTimePicker('end')}>
+                    <View style={{ width: 24 }} />
+                    <Text style={styles.rowText}>{formatDate(date)}</Text>
+                    <Text style={styles.timeText}>{endTime}</Text>
+                </TouchableOpacity>
+            )}
 
             {/* 장소 */}
             <Text style={styles.label}>📍 장소</Text>
@@ -487,6 +663,90 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
         </>
     );
 
+    // ==================== 가계부 UI (New) ====================
+    const renderLedgerUI = () => (
+        <>
+            {/* 수입/지출 토글 */}
+            <View style={styles.ledgerToggleContainer}>
+                <TouchableOpacity
+                    style={[styles.ledgerToggleBtn, ledgerType === 'expense' && { backgroundColor: '#FF6B6B' }]}
+                    onPress={() => setLedgerType('expense')}
+                >
+                    <Text style={[styles.ledgerToggleText, ledgerType === 'expense' && { color: '#fff' }]}>지출</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={[styles.ledgerToggleBtn, ledgerType === 'income' && { backgroundColor: '#4A90D9' }]}
+                    onPress={() => setLedgerType('income')}
+                >
+                    <Text style={[styles.ledgerToggleText, ledgerType === 'income' && { color: '#fff' }]}>수입</Text>
+                </TouchableOpacity>
+            </View>
+
+            {/* 날짜 */}
+            <TouchableOpacity style={styles.row} onPress={() => !isAllDay && openTimePicker('start')}>
+                <Ionicons name="calendar-outline" size={24} color="#888" />
+                <Text style={styles.rowText}>{formatDate(date)}</Text>
+            </TouchableOpacity>
+
+            {/* 금액 입력 */}
+            <Text style={styles.label}>💰 금액</Text>
+            <View style={styles.amountRow}>
+                <TextInput
+                    style={[styles.amountInput, { color: ledgerType === 'income' ? '#4A90D9' : '#FF6B6B' }]}
+                    value={amount}
+                    onChangeText={setAmount}
+                    keyboardType="number-pad"
+                    placeholder="0"
+                    placeholderTextColor="#666"
+                />
+                <Text style={styles.wonText}>원</Text>
+            </View>
+
+            {/* 내역 (제목) */}
+            <Text style={styles.label}>📝 내역</Text>
+            <TextInput
+                style={styles.input}
+                placeholder={ledgerType === 'income' ? "입금처 (예: 월급)" : "사용처 (예: 스타벅스)"}
+                placeholderTextColor="#666"
+                value={title}
+                onChangeText={setTitle}
+            />
+
+            {/* 분류 (카테고리) */}
+            <Text style={styles.label}>📂 분류</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.relationScroll}>
+                {LEDGER_CATEGORIES[ledgerType].map((cat) => (
+                    <TouchableOpacity
+                        key={cat}
+                        style={[
+                            styles.relationChip,
+                            ledgerCategory === cat && { backgroundColor: ledgerType === 'income' ? '#4A90D9' : '#FF6B6B', borderColor: 'transparent' },
+                        ]}
+                        onPress={() => setLedgerCategory(cat)}
+                    >
+                        <Text style={[
+                            styles.relationChipText,
+                            ledgerCategory === cat && { color: '#fff' },
+                        ]}>
+                            {cat}
+                        </Text>
+                    </TouchableOpacity>
+                ))}
+            </ScrollView>
+
+            {/* 메모 */}
+            <Text style={styles.label}>💬 메모</Text>
+            <TextInput
+                style={[styles.input, { height: 80 }]}
+                placeholder="메모 입력"
+                placeholderTextColor="#666"
+                value={memo}
+                onChangeText={setMemo}
+                multiline
+            />
+        </>
+    );
+
     return (
         <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
             <KeyboardAvoidingView
@@ -499,14 +759,14 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                         <Ionicons name="close" size={24} color="#fff" />
                     </TouchableOpacity>
                     <Text style={styles.headerTitle}>
-                        {category === 'ceremony' ? '경조사 추가' : category === 'todo' ? '할일 추가' : '일정 추가'}
+                        {editEvent ? '일정 수정' : (category === 'ceremony' ? '경조사 추가' : category === 'todo' ? '할일 추가' : '일정 추가')}
                     </Text>
                     <TouchableOpacity
                         style={[styles.saveBtn, saving && { opacity: 0.5 }]}
                         onPress={handleSave}
                         disabled={saving}
                     >
-                        <Text style={styles.saveBtnText}>저장</Text>
+                        <Text style={styles.saveBtnText}>{editEvent ? '수정' : '저장'}</Text>
                     </TouchableOpacity>
                 </View>
 
@@ -516,7 +776,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                         <TouchableOpacity
                             key={tab.key}
                             style={[styles.categoryTab, category === tab.key && styles.categoryTabActive]}
-                            onPress={() => setCategory(tab.key as 'ceremony' | 'todo' | 'schedule')}
+                            onPress={() => setCategory(tab.key as any)}
                         >
                             <Ionicons
                                 name={tab.icon as any}
@@ -531,7 +791,9 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                 </View>
 
                 <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-                    {category === 'ceremony' ? renderCeremonyUI() : renderScheduleUI()}
+                    {category === 'ceremony' ? renderCeremonyUI() :
+                        category === 'expense' ? renderLedgerUI() :
+                            renderScheduleUI()}
                     <View style={{ height: 100 }} />
                 </ScrollView>
             </KeyboardAvoidingView>
@@ -717,50 +979,12 @@ const styles = StyleSheet.create({
     ceremonyType: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: '#444',
-        gap: 6,
+        // ... (existing styles)
     },
+
+
     ceremonyTypeText: { fontFamily: 'Pretendard-Medium', fontSize: 13, color: '#888' },
-    relationScroll: { marginBottom: 8 },
-    relationChip: {
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: '#444',
-        marginRight: 8,
-    },
-    relationChipActive: { backgroundColor: '#5B7FBF', borderColor: '#5B7FBF' },
-    relationChipText: { fontFamily: 'Pretendard-Medium', fontSize: 13, color: '#888' },
-    relationChipTextActive: { color: '#fff' },
-    recommendationBox: {
-        backgroundColor: '#2a2a4e',
-        borderRadius: 12,
-        padding: 16,
-        marginTop: 16,
-        alignItems: 'center',
-    },
-    recommendationTitle: { fontFamily: 'Pretendard-Medium', fontSize: 14, color: '#FFD93D' },
-    recommendationAmount: { fontFamily: 'Pretendard-Bold', fontSize: 28, color: '#fff', marginVertical: 8 },
-    recommendationReason: { fontFamily: 'Pretendard-Regular', fontSize: 12, color: '#888', textAlign: 'center' },
-    applyButton: { backgroundColor: '#5B7FBF', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 20, marginTop: 12 },
-    applyButtonText: { fontFamily: 'Pretendard-Medium', fontSize: 14, color: '#fff' },
-    amountRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    amountInput: {
-        flex: 1,
-        backgroundColor: '#2a2a4e',
-        borderRadius: 12,
-        padding: 14,
-        fontFamily: 'Pretendard-Medium',
-        fontSize: 18,
-        color: '#fff',
-        textAlign: 'right',
-    },
-    wonText: { fontFamily: 'Pretendard-Medium', fontSize: 18, color: '#888' },
+
 
     // 일정/할일 UI 스타일
     titleInput: {
@@ -930,5 +1154,110 @@ const styles = StyleSheet.create({
     optionItemTextActive: {
         color: '#5B7FBF',
         fontFamily: 'Pretendard-Bold',
+    },
+
+    // Ledger styles
+    ledgerToggleContainer: {
+        flexDirection: 'row',
+        marginBottom: 20,
+        backgroundColor: '#1E293B',
+        borderRadius: 12,
+        padding: 4,
+    },
+    ledgerToggleBtn: {
+        flex: 1,
+        paddingVertical: 10,
+        alignItems: 'center',
+        borderRadius: 8,
+    },
+    ledgerToggleText: {
+        color: '#888',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+
+    // Relation/Category Chips
+    relationScroll: {
+        flexGrow: 0,
+        marginBottom: 20,
+    },
+    relationChip: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#444',
+        marginRight: 8,
+        backgroundColor: '#1E293B',
+    },
+    relationChipActive: {
+        backgroundColor: '#5B7FBF',
+        borderColor: '#5B7FBF',
+    },
+    relationChipText: {
+        color: '#fff',
+        fontSize: 14,
+    },
+    relationChipTextActive: {
+        color: '#fff',
+        fontWeight: 'bold',
+    },
+
+    // Amount
+    amountRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    amountInput: {
+        flex: 1,
+        fontSize: 24,
+        fontWeight: 'bold',
+        color: '#fff',
+        borderBottomWidth: 1,
+        borderBottomColor: '#444',
+        paddingVertical: 8,
+    },
+    wonText: {
+        fontSize: 20,
+        color: '#fff',
+        marginLeft: 8,
+    },
+
+    // Recommendation
+    recommendationBox: {
+        backgroundColor: 'rgba(91, 127, 191, 0.1)',
+        padding: 16,
+        borderRadius: 12,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(91, 127, 191, 0.3)',
+    },
+    recommendationTitle: {
+        color: '#5B7FBF',
+        fontSize: 14,
+        marginBottom: 8,
+        fontWeight: 'bold',
+    },
+    recommendationAmount: {
+        color: '#fff',
+        fontSize: 20,
+        fontWeight: 'bold',
+        marginBottom: 4,
+    },
+    recommendationReason: {
+        color: '#aaa',
+        fontSize: 14,
+        marginBottom: 12,
+    },
+    applyButton: {
+        backgroundColor: '#5B7FBF',
+        paddingVertical: 8,
+        borderRadius: 8,
+        alignItems: 'center',
+    },
+    applyButtonText: {
+        color: '#fff',
+        fontWeight: 'bold',
     },
 });

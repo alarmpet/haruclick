@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Colors } from '../../constants/Colors';
 import { Ionicons } from '@expo/vector-icons';
 import { extractTextFromImage, preprocessRelativeDates } from '../../services/ocr';
@@ -99,13 +99,22 @@ export default function UniversalScannerScreen() {
         }
     };
 
+    const isVirtualAccountPaymentText = (input: string) => {
+        const compact = (input || '').replace(/\s+/g, '');
+        const hasPaymentIntent = /(납입|납부|보험료|보험금|청구|납입할)/.test(compact);
+        const hasVirtualAccount = /(가상계좌|입금가상계좌|가상계좌번호)/.test(compact);
+        return hasPaymentIntent && hasVirtualAccount;
+    };
+
     const processImage = async (uri: string) => {
         loading.show('Analyzing...');
         try {
-            const text = await extractTextFromImage(uri);
-            const textLength = text?.trim().length || 0;
+            const ocrResult = await extractTextFromImage(uri);
+            const ocrText = typeof ocrResult === 'string' ? ocrResult : ocrResult?.text || '';
+            const normalizedText = ocrText.trim();
+            const textLength = normalizedText.length;
             if (textLength > 5) {
-                const preprocessed = preprocessRelativeDates(text);
+                const preprocessed = preprocessRelativeDates(normalizedText);
                 const results = await analyzeImageText(preprocessed);
                 const valid = results.filter(r => r.type !== 'UNKNOWN');
                 if (valid.length > 0) {
@@ -116,6 +125,9 @@ export default function UniversalScannerScreen() {
             const base64 = await readImageAsBase64(uri);
             const visualResult = await analyzeImageVisual(base64);
             if (visualResult && visualResult.type !== 'UNKNOWN') {
+                if (visualResult.type === 'BANK_TRANSFER' && isVirtualAccountPaymentText(normalizedText)) {
+                    (visualResult as any).transactionType = 'withdrawal';
+                }
                 handleScanResult([visualResult], uri);
                 return;
             }
@@ -138,36 +150,42 @@ export default function UniversalScannerScreen() {
         router.push({ pathname: '/scan/result', params: { imageUri: uri } });
     };
 
+
     const handleUrlSubmit = async () => {
-        if (!url) {
-            Alert.alert('알림', 'URL을 입력해주세요.');
+        if (!url || !url.trim()) {
+            Alert.alert('알림', '텍스트 또는 URL을 입력해주세요.');
             return;
         }
-        if (!url.startsWith('http')) {
-            Alert.alert('오류', '올바른 URL 형식이 아닙니다 (http:// 또는 https:// 포함).');
-            return;
-        }
-        loading.show('Analyzing URL...');
+
+        const trimmedInput = url.trim();
+        const isUrl = trimmedInput.startsWith('http://') || trimmedInput.startsWith('https://');
+
+        loading.show(isUrl ? 'URL 분석 중...' : '텍스트 분석 중...');
         try {
-            const html = await fetchUrlContent(url);
-            const results = await analyzeImageText(html);
+            let textToAnalyze: string;
+
+            if (isUrl) {
+                // URL인 경우: 웹페이지 크롤링
+                textToAnalyze = await fetchUrlContent(trimmedInput);
+            } else {
+                // 일반 텍스트인 경우: 직접 분석
+                textToAnalyze = preprocessRelativeDates(trimmedInput);
+            }
+
+            const results = await analyzeImageText(textToAnalyze);
             const valid = results.filter(r => r.type !== 'UNKNOWN');
             if (valid.length > 0) {
-                handleScanResult(valid, url);
+                handleScanResult(valid, isUrl ? trimmedInput : 'text-input');
             } else {
-                Alert.alert('분석 실패', 'URL 내용을 분석할 수 없습니다.');
+                Alert.alert('분석 실패', '내용을 분석할 수 없습니다. 다른 형식으로 시도해주세요.');
             }
         } catch (e: any) {
             console.error(e);
-            showError(e.message ?? 'URL을 분석할 수 없습니다.');
+            showError(e.message ?? '분석 중 오류가 발생했습니다.');
         } finally {
             loading.hide();
         }
     };
-
-    const handleTestConnection = async () => {
-        Alert.alert("테스트", "기능이 준비중입니다.");
-    }
 
     return (
         <View style={[common.container, { backgroundColor: colors.background }]}>
@@ -176,15 +194,8 @@ export default function UniversalScannerScreen() {
                 <View style={styles.header}>
                     <Text style={[styles.title, { color: colors.text }]}>AI 문서 스캔</Text>
                     <Text style={[styles.description, { color: colors.subText }]}>
-                        청첩장, 기프티콘, 송금내역을{'\n'}자동으로 분류하여 저장합니다.
+                        영수증, 청첩장, 송금내역 등을{'\n'}자동으로 분류하여 저장합니다.
                     </Text>
-                    <TouchableOpacity
-                        onPress={handleTestConnection}
-                        style={{ marginTop: 10, padding: 8, backgroundColor: colors.card, borderRadius: 8 }}
-                        accessibilityLabel="API 연결 테스트"
-                    >
-                        <Text style={{ fontSize: 12, color: colors.subText }}>⚡ API 연결 테스트</Text>
-                    </TouchableOpacity>
                 </View>
 
                 {/* URL Input */}
@@ -193,12 +204,14 @@ export default function UniversalScannerScreen() {
                         <Ionicons name="link-outline" size={20} color={colors.subText} style={{ marginRight: 8 }} />
                         <TextInput
                             style={[styles.input, { color: colors.text }]}
-                            placeholder="모바일 청첩장/부고 링크 붙여넣기"
+                            placeholder="URL 또는 문자 내용 붙여넣기"
                             placeholderTextColor={colors.subText}
                             value={url}
                             onChangeText={setUrl}
                             autoCapitalize="none"
-                            accessibilityLabel="링크 입력창"
+                            multiline={true}
+                            numberOfLines={3}
+                            accessibilityLabel="URL 또는 텍스트 입력창"
                         />
                     </View>
                     <TouchableOpacity

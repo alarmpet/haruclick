@@ -1,22 +1,52 @@
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
-Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-        shouldPlaySound: true,
-        shouldSetBadge: false,
-        shouldShowBanner: true,
-        shouldShowList: true,
-    }),
-});
+// Expo Go에서는 expo-notifications가 지원되지 않음 (SDK 53+)
+const isExpoGo = Constants.appOwnership === 'expo';
+
+// 동적 import를 위한 타입
+type NotificationsModule = typeof import('expo-notifications');
+let _notifications: NotificationsModule | null = null;
+let _initialized = false;
+
+async function getNotifications(): Promise<NotificationsModule | null> {
+    if (isExpoGo) {
+        return null;
+    }
+
+    if (_initialized) return _notifications;
+
+    try {
+        _notifications = await import('expo-notifications');
+        _notifications.setNotificationHandler({
+            handleNotification: async () => ({
+                shouldPlaySound: true,
+                shouldSetBadge: false,
+                shouldShowBanner: true,
+                shouldShowList: true,
+            }),
+        });
+        _initialized = true;
+        console.log('[Notifications] Initialized successfully');
+    } catch (e) {
+        console.warn('[Notifications] Failed to initialize:', e);
+        _initialized = true;
+    }
+
+    return _notifications;
+}
 
 export async function registerForPushNotificationsAsync() {
     if (Platform.OS === 'web') {
         console.log('Push notifications are not fully supported on web.');
-        return true; // Mock success for web demo
+        return true;
     }
 
-    let token;
+    const Notifications = await getNotifications();
+    if (!Notifications) {
+        console.log('[Notifications] Skipping - not available');
+        return true;
+    }
 
     if (Platform.OS === 'android') {
         await Notifications.setNotificationChannelAsync('default', {
@@ -40,17 +70,17 @@ export async function registerForPushNotificationsAsync() {
         return;
     }
 
-    // Usually we would get a token here for remote push, but for local we just need permissions
     return true;
 }
 
 export async function scheduleNotification(title: string, body: string, seconds = 1) {
     if (Platform.OS === 'web') {
         console.log(`[Web Notification] ${title}: ${body}`);
-        // Optional: Use browser alert for visibility in demo
-        // setTimeout(() => window.alert(`${title}\n${body}`), seconds * 1000);
         return;
     }
+
+    const Notifications = await getNotifications();
+    if (!Notifications) return;
 
     await Notifications.scheduleNotificationAsync({
         content: {
@@ -68,12 +98,14 @@ export async function scheduleNotification(title: string, body: string, seconds 
 export async function scheduleEventNotification(
     title: string,
     eventDate: string,
-    eventTime: string | undefined, // undefined if all day (default 9 AM?)
+    eventTime: string | undefined,
     minutesBefore: number
 ) {
     if (Platform.OS === 'web') return;
 
-    // 1. 이벤트 시간 설정 (종일이면 오전 9시 기준)
+    const Notifications = await getNotifications();
+    if (!Notifications) return;
+
     const timeStr = eventTime || '09:00';
     const eventDateTimeStr = `${eventDate}T${timeStr}:00`;
     const targetDate = new Date(eventDateTimeStr);
@@ -83,10 +115,8 @@ export async function scheduleEventNotification(
         return;
     }
 
-    // 2. 알림 시간 계산 (minutesBefore 분 전)
     const triggerDate = new Date(targetDate.getTime() - minutesBefore * 60000);
 
-    // 3. 이미 지난 시간인지 체크
     if (triggerDate.getTime() <= Date.now()) {
         console.log('Notification time is in the past, skipping:', triggerDate);
         return;
