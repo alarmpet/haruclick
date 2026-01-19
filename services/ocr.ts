@@ -678,14 +678,25 @@ function parseRelativeHeaderLine(line: string): { word: RelativeWord; time: stri
     return { word: m[1] as RelativeWord, time: m[2] };
 }
 
-function parseAnchorAbsLine(line: string): { mm: number; dd: number; time?: string } | null {
+function parseAnchorAbsLine(line: string): { year?: number; mm: number; dd: number; time?: string } | null {
+    // 1. Try YYYY/MM/DD or YY/MM/DD
+    // Matches: 2026/01/14, 26/01/14, 2026-01-14, 26-01-14
+    const ymdMatch = line.match(/(?:^|\s)(20\d{2}|\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})(?:\s+(\d{1,2}:\d{2}))?/);
+    if (ymdMatch) {
+        let y = Number(ymdMatch[1]);
+        if (y < 100) y += 2000; // 26 -> 2026
+        return { year: y, mm: Number(ymdMatch[2]), dd: Number(ymdMatch[3]), time: ymdMatch[4] };
+    }
+
+    // 2. Fallback to MM/DD
     // supports: 01/10 16:11  |  1/10 16:11  |  01/10
-    const m = line.match(/(?:^|\s)(\d{1,2})\/(\d{1,2})(?:\s+(\d{1,2}:\d{2}))?/);
+    const m = line.match(/(?:^|\s)(\d{1,2})[\/.-](\d{1,2})(?:\s+(\d{1,2}:\d{2}))?/);
     if (!m) return null;
     return { mm: Number(m[1]), dd: Number(m[2]), time: m[3] };
 }
 
-function guessYearFor(mm: number, dd: number, today: Date) {
+function guessYearFor(mm: number, dd: number, today: Date, explicitYear?: number) {
+    if (explicitYear) return explicitYear;
     // Simple & safe: assume same year; if date looks "in future" too far, roll back year.
     const y = today.getFullYear();
     const candidate = new Date(y, mm - 1, dd);
@@ -831,7 +842,8 @@ export function preprocessChatScreenshotOcrText(
         for (let k = fromIndex; k < realBlocks.length; k++) {
             const a = realBlocks[k].anchorAbs;
             if (a) {
-                const y = guessYearFor(a.mm, a.dd, scanNow);
+                // @ts-ignore - year added to parseAnchorAbsLine
+                const y = guessYearFor(a.mm, a.dd, scanNow, a.year);
                 return new Date(y, a.mm - 1, a.dd);
             }
         }
@@ -839,7 +851,8 @@ export function preprocessChatScreenshotOcrText(
         for (let k = fromIndex - 1; k >= 0; k--) {
             const a = realBlocks[k].anchorAbs;
             if (a) {
-                const y = guessYearFor(a.mm, a.dd, scanNow);
+                // @ts-ignore - year added to parseAnchorAbsLine
+                const y = guessYearFor(a.mm, a.dd, scanNow, a.year);
                 return new Date(y, a.mm - 1, a.dd);
             }
         }
