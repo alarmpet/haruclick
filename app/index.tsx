@@ -93,9 +93,22 @@ export default function Home() {
 
     useFocusEffect(
         useCallback(() => {
-            fetchUserStats().then(setStats);
-            getTodayEvents().then(setTodayEvents);
-            getUpcomingEvents(5).then(setUpcomingEvents);
+            const loadHomeData = async () => {
+                try {
+                    const [statsData, todayData, upcomingData] = await Promise.all([
+                        fetchUserStats(),
+                        getTodayEvents(),
+                        getUpcomingEvents(5)
+                    ]);
+
+                    setStats(statsData);
+                    setTodayEvents(todayData);
+                    setUpcomingEvents(upcomingData);
+                } catch (error) {
+                    console.error('Failed to load home data:', error);
+                }
+            };
+            loadHomeData();
         }, [])
     );
 

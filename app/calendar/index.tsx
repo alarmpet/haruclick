@@ -251,19 +251,35 @@ export default function CalendarScreen() {
         // 2. 외부 일정 처리 (schedule 필터가 켜진 경우에만 표시하거나, 항상 표시?)
         // 일단 'schedule' 필터에 종속시킨다.
         if (activeFilters.schedule) {
+            // [Optimization] O(N) Lookup Table generation
+            const internalSignatures = new Set<string>();
+            internalData.forEach(int => {
+                const name = (int.name || '').normalize('NFC').replace(/\s+/g, '');
+                internalSignatures.add(`${name}|${int.date}`);
+            });
+
             const visibleExternal = externalData.filter(ext => {
-                const dateStr = ext.startDate.split('T')[0];
-                const isDuplicate = internalData.some(int => {
-                    const nameMatch = (int.name || '').normalize('NFC').replace(/\s+/g, '') === (ext.title || '').normalize('NFC').replace(/\s+/g, '');
+                const extName = (ext.title || '').normalize('NFC').replace(/\s+/g, '');
+                const extDateStr = ext.startDate.split('T')[0];
+                const extDate = new Date(extDateStr);
 
-                    const intDate = new Date(int.date);
-                    const extDate = new Date(dateStr);
-                    const diffTime = Math.abs(intDate.getTime() - extDate.getTime());
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                // Check Exact Match
+                if (internalSignatures.has(`${extName}|${extDateStr}`)) return false;
 
-                    return nameMatch && (int.date === dateStr || diffDays <= 1);
-                });
-                return !isDuplicate;
+                // Check +/- 1 Day (Fuzzy Match)
+                // Prev Day
+                const prevDate = new Date(extDate);
+                prevDate.setDate(prevDate.getDate() - 1);
+                const prevDateStr = prevDate.toISOString().split('T')[0];
+                if (internalSignatures.has(`${extName}|${prevDateStr}`)) return false;
+
+                // Next Day
+                const nextDate = new Date(extDate);
+                nextDate.setDate(nextDate.getDate() + 1);
+                const nextDateStr = nextDate.toISOString().split('T')[0];
+                if (internalSignatures.has(`${extName}|${nextDateStr}`)) return false;
+
+                return true;
             });
 
             visibleExternal.forEach(event => {

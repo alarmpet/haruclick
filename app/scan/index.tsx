@@ -1,4 +1,5 @@
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useState } from 'react';
@@ -62,7 +63,7 @@ export default function ScanScreen() {
                 {/* Image Picker Area */}
                 <TouchableOpacity style={styles.imageContainer} onPress={pickImage} activeOpacity={0.9}>
                     {image ? (
-                        <Image source={{ uri: image }} style={styles.image} resizeMode="contain" />
+                        <Image source={{ uri: image }} style={styles.image} contentFit="contain" />
                     ) : (
                         <View style={styles.placeholder}>
                             <Ionicons name="camera-outline" size={48} color={Colors.subText} />
