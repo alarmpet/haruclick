@@ -277,6 +277,12 @@ MANDATORY FIELDS
 - APPOINTMENT: date_or_datetime + place_name + title
 
 EXTRACTION RULES
+- CORE EXTRACTION PRIORITIES (HIGHEST IMPORTANCE):
+  1. WHEN (Date/Time): MUST resolve absolute date/time (YYYY-MM-DD HH:mm).
+  2. WHERE (Merchant/Source): Merchant Name for payments, Sender/Bank for deposits.
+  3. HOW MUCH (Amount): Exact amount (repair broken numbers if needed).
+  * Focus on extracting these 3 fields ACCURATELY before anything else.
+
 - Evidence: include short raw snippets (2-6 words) that justify type/amount/date.
 - Amount conflict: prefer amounts near "승인금액", "합계", "총액"; else largest; else last.
 - Bill amounts: if both "납기 내 금액" and "납기 후 금액" exist, use the within-due amount.
@@ -285,6 +291,10 @@ EXTRACTION RULES
 - If text includes "택배"/"배송", classify as APPOINTMENT and put tracking numbers in memo when present.
 - If text includes "병원" with "빈소/발인/부고/장례", treat as INVITATION (funeral); if "예약/내원/진료/검진", treat as APPOINTMENT.
 - If text includes "납입/납부/보험료" AND "가상계좌/입금가상계좌", treat as BANK_TRANSFER with direction="out" even if "입금" appears.
+- NUMBER REPAIR RULES (CRITICAL):
+  * Receipts often have broken numbers due to spacing/decimals (e.g., "125. 600", "11. 418", "1 000").
+  * You MUST repair these into integers for amounts: "125. 600" -> 125600.
+  * "총금액" or "합계" is the Priority Amount. Ignore "세금", "부가세" amounts if a larger Total exists.
 - Appointment keywords: 병원, 진료, 진료예약, 예약, 예약일자, 예약시간, 진료과, 검사, 검진, 외래, 접수, 내원.
   If both APPOINTMENT and INVITATION are possible, choose APPOINTMENT.
 - Invitation name rule: patterns like "장남/장녀/차남/차녀/아들/딸 NAME" or "신랑/신부 NAME" -> host_names.
