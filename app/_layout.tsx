@@ -115,9 +115,14 @@ export default function RootLayout() {
         };
         init();
 
-        // Auth Check
-        // Auth Check
+        // Auth Check with Timeout Safety (5s)
+        const sessionTimeout = setTimeout(() => {
+            console.log('Session check timeout - proceeding without session');
+            setInitialized(true);
+        }, 5000);
+
         supabase.auth.getSession().then(({ data: { session }, error }) => {
+            clearTimeout(sessionTimeout);
             if (error) {
                 console.log('Session init error:', error);
                 // Invalid Refresh Token 에러 발생 시 강제 로그아웃
@@ -133,6 +138,7 @@ export default function RootLayout() {
             setSession(session);
             setInitialized(true);
         }).catch(e => {
+            clearTimeout(sessionTimeout);
             console.log('Session check failed:', e);
             setInitialized(true);
         });
@@ -263,6 +269,19 @@ export default function RootLayout() {
                             tabBarIcon: ({ color, focused }) => (
                                 <Ionicons name={focused ? "calendar" : "calendar-outline"} size={24} color={color} />
                             ),
+                        }}
+                        listeners={{
+                            tabPress: (e: any) => {
+                                // 탭 누를 때마다 강제 리프레시 (날짜 파라미터 삭제 & refresh param 갱신)
+                                e.preventDefault();
+                                router.push({
+                                    pathname: '/calendar',
+                                    params: {
+                                        refresh: Date.now(),
+                                        date: '' // date 파라미터 초기화
+                                    }
+                                });
+                            },
                         }}
                     />
                     <Tabs.Screen

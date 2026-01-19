@@ -21,6 +21,7 @@ export default function AnalyzeGifticonScreen() {
     const router = useRouter();
     const [analyzing, setAnalyzing] = useState(true);
     const [result, setResult] = useState<any>(null);
+    const [allResults, setAllResults] = useState<ScannedData[]>([]); // ✅ 다중 결과 저장
     const [originalResult, setOriginalResult] = useState<any>(null); // Track AI vs User edits
     const [rawText, setRawText] = useState<string>("");
     const [imageUri, setImageUri] = useState<string | null>(null);
@@ -104,15 +105,20 @@ export default function AnalyzeGifticonScreen() {
 
             const service = new GifticonAnalysisService();
             console.log('[Analyze] Calling analyzeWithAI...');
-            const data = await service.analyzeWithAI(ocrText, uri, ocrScore);
-            console.log('[Analyze] analyzeWithAI Returned:', JSON.stringify(data).substring(0, 100)); // Log first 100 chars
+            const dataArray = await service.analyzeWithAI(ocrText, uri, ocrScore);
+            console.log(`[Analyze] analyzeWithAI Returned: ${dataArray.length} item(s)`);
 
-            setResult(data);
-            setOriginalResult({ ...data }); // Clone for baseline
+            // ✅ 다중 결과 저장
+            setAllResults(dataArray);
+
+            // 첫 번째 결과를 UI에 표시
+            const firstResult = dataArray[0];
+            setResult(firstResult);
+            setOriginalResult({ ...firstResult }); // Clone for baseline
             console.log('[Analyze] Result state set.');
 
-            if (data.senderName && data.senderName !== "Unknown") {
-                checkSenderName(data.senderName);
+            if (firstResult?.senderName && firstResult.senderName !== "Unknown") {
+                checkSenderName(firstResult.senderName);
             }
         } catch (e: any) {
             console.error('[Analyze] Analysis failed:', e);
@@ -225,8 +231,17 @@ export default function AnalyzeGifticonScreen() {
 
             console.log('[handleConfirm] 저장 시도 Tier:', tier, 'Level:', level);
 
-            // 1. Save Event to DB
-            await saveUnifiedEvent(result, imageUri as string);
+            // ✅ 모든 결과 저장 (다중 거래 지원)
+            // 첫 번째 결과는 사용자 편집된 버전 사용
+            const resultsToSave = allResults.length > 1
+                ? [result, ...allResults.slice(1)]
+                : [result];
+
+            console.log(`[handleConfirm] 저장할 항목 수: ${resultsToSave.length}`);
+
+            for (const item of resultsToSave) {
+                await saveUnifiedEvent(item, imageUri as string);
+            }
 
             // 2. Process Feedback Loop (Async)
             // Import OcrFeedbackService first (I'll assume it's imported at top, wait I need to add import)

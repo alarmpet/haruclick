@@ -66,48 +66,48 @@ export class GifticonAnalysisService {
     /**
      * Intelligent Analysis Orchestrator
      * Flow: Stage 2 (Text, Timeout 15s) -> Validate -> Stage 4 (Vision, Timeout 20s) -> Fallback
+     * ✅ 다중 거래 지원을 위해 ScannedData[] 반환
      */
-    async analyzeWithAI(text: string, imageUri?: string, ocrScore: number = 50): Promise<ScannedData> {
+    async analyzeWithAI(text: string, imageUri?: string, ocrScore: number = 50): Promise<ScannedData[]> {
         const logger = getCurrentOcrLogger();
         console.log(`[Orchestrator] Starting Analysis... (OCR Score: ${ocrScore})`);
 
         // 1. Stage 2: Text Analysis (Timeout 15s)
-        let textResult: ScannedData | null = null;
+        let textResults: ScannedData[] = [];
         try {
-            const rawResults = await timeoutPromise<ScannedData[]>(15000, analyzeImageText(text));
-            textResult = rawResults[0] || null;
+            const rawResults = await timeoutPromise<ScannedData[]>(25000, analyzeImageText(text));
+            textResults = rawResults || [];
 
-            // ⚡ Calculate Confidence for Stage 2
-            if (textResult) {
-                const calc = calculateFinalConfidence(textResult, ocrScore, 'text');
-                textResult.confidence = calc.score;
-                textResult.confidence_breakdown = calc.breakdown;
+            // ✅ OpenAI 신뢰도 유지 (이중 계산 제거) - breakdown만 추가
+            for (const result of textResults) {
+                const calc = calculateFinalConfidence(result, ocrScore, 'text');
+                // result.confidence는 OpenAI 값 유지
+                result.confidence_breakdown = calc.breakdown;
             }
 
-            logger?.logOpenAiText(true, textResult.type, textResult.type === 'UNKNOWN' ? 'unknown_type' : undefined);
+            const firstResult = textResults[0];
+            logger?.logOpenAiText(true, firstResult?.type, firstResult?.type === 'UNKNOWN' ? 'unknown_type' : undefined);
 
         } catch (e: any) {
-            console.warn('[Orchestrator] Stage 2 Failed:', e);
+            console.warn('[Orchestrator] Stage 2 Failed:', e?.message || e);
             const errorType = e instanceof OcrError ? e.type : OcrErrorType.UNKNOWN_ERROR;
 
             // PARTIAL SUCCESS Check:
             if (e.message?.includes('JSON') || errorType === OcrErrorType.PARSING_ERROR) {
                 console.log('[Orchestrator] JSON Parse Error -> Attempting Partial Fallback');
                 logger?.logOpenAiText(false, undefined, 'json_parse_error');
-                // Don't kill process, treat as NULL result to trigger fallback logic or return partial
-                // Use textRegex fallback immediately if we want to return "something"
-                textResult = this.analyzeFromText(text);
+                // Use textRegex fallback
+                textResults = [this.analyzeFromText(text)];
             } else {
                 logger?.logOpenAiText(false, undefined, errorType === OcrErrorType.TIMEOUT ? 'timeout' : 'stage2_exception');
-                // If timeout/network, we might want to fail hard? 
-                // Plan says: "Fail hard for timeout" but also "Partial Draft".
-                // Let's rely on "Worth It" check. If Stage 2 timeouts, result is null.
+                // Stage 2 실패 시 빈 배열로 유지 (Stage 4로 폴백)
             }
         }
 
         // 2. Evaluate if Stage 4 (Vision) is needed
-        // Note: If textResult is partial (UNKNOWN) from fallback above, shouldTriggerStage4 will assess it.
-        const needsFallback = this.shouldTriggerStage4(textResult, text);
+        // ✅ 첫 번째 결과로 폴백 필요 여부 판단
+        const firstTextResult = textResults[0] || null;
+        const needsFallback = this.shouldTriggerStage4(firstTextResult, text);
 
         if (needsFallback && imageUri) {
             console.log('[Orchestrator] Triggering Stage 4 (Vision Fallback)...');
@@ -115,39 +115,44 @@ export class GifticonAnalysisService {
                 // Read Image as Base64
                 const base64 = await FileSystem.readAsStringAsync(imageUri, { encoding: FileSystem.EncodingType.Base64 });
 
-                // 3. Stage 4: Vision Analysis (Timeout 20s)
-                const visionResult = await timeoutPromise<ScannedData>(20000, analyzeImageVisual(base64));
+                // 3. Stage 4: Vision Analysis (Timeout 20s) - ✅ 다중 결과 반환
+                const visionResults = await timeoutPromise<ScannedData[]>(30000, analyzeImageVisual(base64));
 
-                // ⚡ Calculate Confidence for Stage 4
-                const calc = calculateFinalConfidence(visionResult, 0, 'vision');
-                visionResult.confidence = calc.score;
-                visionResult.confidence_breakdown = calc.breakdown;
+                // ✅ OpenAI 신뢰도 유지 (이중 계산 제거) - breakdown만 추가
+                for (const result of visionResults) {
+                    const calc = calculateFinalConfidence(result, 0, 'vision');
+                    // result.confidence는 OpenAI 값 유지
+                    result.confidence_breakdown = calc.breakdown;
+                }
 
-                logger?.logOpenAiVision(true, visionResult.type);
-                return visionResult;
+                logger?.logOpenAiVision(true, visionResults[0]?.type);
+                console.log(`[Orchestrator] Vision returned ${visionResults.length} transaction(s)`);
+                return visionResults;
 
             } catch (visionError: any) {
-                console.error('[Orchestrator] Stage 4 Failed:', visionError);
+                console.error('[Orchestrator] Stage 4 Failed:', visionError?.message || visionError);
                 const vErrorType = visionError instanceof OcrError ? visionError.type : OcrErrorType.UNKNOWN_ERROR;
 
                 logger?.logOpenAiVision(false, undefined, vErrorType === OcrErrorType.TIMEOUT ? 'timeout' : 'vision_exception');
 
                 // If Vision fails, we fall back to:
-                // 1. Text Result (if it existed)
+                // 1. Text Results (if existed)
                 // 2. Partial Draft (if Text failed totally)
-                if (vErrorType === OcrErrorType.TIMEOUT) {
-                    throw new OcrError(OcrErrorType.TIMEOUT, "Vision Analysis Timed Out", 'openai_vision');
+                // ✅ Vision 타임아웃 시 Text 결과로 폴백 (예외 던지지 않음)
+                if (vErrorType === OcrErrorType.TIMEOUT && textResults.length > 0) {
+                    console.log('[Orchestrator] Vision timeout, falling back to Text results');
+                    return textResults;
                 }
             }
         } else {
             if (needsFallback) console.log('[Orchestrator] Stage 4 skipped (No Image URI or Not Worth It)');
         }
 
-        // 4. Return Best Result
-        if (textResult) return textResult;
+        // 4. Return Best Result - ✅ 항상 배열 반환
+        if (textResults.length > 0) return textResults;
 
         // Final Fallback: if everything failed but we have text, return partial
-        return this.analyzeFromText(text);
+        return [this.analyzeFromText(text)];
     }
 
     /**
@@ -165,7 +170,8 @@ export class GifticonAnalysisService {
         }
 
         const hasMoney = /[0-9,]+원|KRW|[0-9,]{4,}/.test(rawText);
-        const hasDate = /202\d|199\d/.test(rawText);
+        // ✅ 날짜 패턴 확장: MM/DD, MM월DD일 형식도 포함
+        const hasDate = /202\d|199\d|\d{1,2}\/\d{1,2}|\d{1,2}월\s*\d{1,2}일/.test(rawText);
         const hasKeywords = /결제|승인|주문|예약|초대/.test(rawText);
 
         if (hasMoney || hasDate || hasKeywords) {

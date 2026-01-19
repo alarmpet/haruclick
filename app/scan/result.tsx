@@ -1138,17 +1138,31 @@ export default function SmartScanResultScreen() {
                             onChangeText={(text) => handleUpdateData('amount', parseInt(text.replace(/[^0-9]/g, '') || '0', 10))}
                             isCurrency
                         />
-                        <EditableRow
-                            label="일시"
-                            value={formatDisplayDateTime(receipt.date || '')}
-                            onChangeText={(text) => handleUpdateData('date', normalizeDateInput(text))}
-                            placeholder="YYYY-MM-DD HH:mm"
-                        />
-                        <EditableRow
-                            label="카테고리"
-                            value={receipt.category || ''}
-                            onChangeText={(text) => handleUpdateData('category', text)}
-                        />
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>일시</Text>
+                            <TouchableOpacity
+                                style={styles.categorySelect}
+                                onPress={() => openDatePicker(0)}
+                            >
+                                <Text style={styles.categorySelectText}>
+                                    {formatDisplayDateTime(receipt.date || '') || 'YYYY-MM-DD HH:mm'}
+                                </Text>
+                                <Ionicons name="calendar-outline" size={16} color={Colors.subText} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>카테고리</Text>
+                            <TouchableOpacity
+                                style={styles.categorySelect}
+                                onPress={() => openCategoryModal('category', receipt.category)}
+                            >
+                                <Text style={styles.categorySelectText}>
+                                    {receipt.category || '선택하세요'}
+                                </Text>
+                                <Ionicons name="chevron-down" size={16} color={Colors.subText} />
+                            </TouchableOpacity>
+                        </View>
 
                         <View style={[styles.accountBox, { backgroundColor: '#FFF7ED', marginTop: 16 }]}>
                             <Text style={[styles.accountLabel, { color: Colors.orange }]}>AI 자동 분류</Text>
@@ -1234,23 +1248,44 @@ export default function SmartScanResultScreen() {
                             onChangeText={(text) => handleUpdateData('amount', parseInt(text.replace(/[^0-9]/g, '') || '0', 10))}
                             isCurrency
                         />
-                        <EditableRow
-                            label="일시"
-                            value={formatDisplayDateTime(store.date || '')}
-                            onChangeText={(text) => handleUpdateData('date', normalizeDateInput(text))}
-                            placeholder="YYYY-MM-DD HH:mm"
-                        />
-                        <EditableRow
-                            label="카테고리"
-                            value={store.category || ''}
-                            onChangeText={(text) => handleUpdateData('category', text)}
-                        />
-                        <EditableRow
-                            label="상세 분류 (선택)"
-                            value={store.subCategory || ''}
-                            onChangeText={(text) => handleUpdateData('subCategory', text)}
-                            placeholder="예: 식료품, OTT, 관리비"
-                        />
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>일시</Text>
+                            <TouchableOpacity
+                                style={styles.categorySelect}
+                                onPress={() => openDatePicker(0)}
+                            >
+                                <Text style={styles.categorySelectText}>
+                                    {formatDisplayDateTime(store.date || '') || 'YYYY-MM-DD HH:mm'}
+                                </Text>
+                                <Ionicons name="calendar-outline" size={16} color={Colors.subText} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>카테고리</Text>
+                            <TouchableOpacity
+                                style={styles.categorySelect}
+                                onPress={() => openCategoryModal('category', store.category)}
+                            >
+                                <Text style={styles.categorySelectText}>
+                                    {store.category || '선택하세요'}
+                                </Text>
+                                <Ionicons name="chevron-down" size={16} color={Colors.subText} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>상세 분류 (선택)</Text>
+                            <TouchableOpacity
+                                style={styles.categorySelect}
+                                onPress={() => openCategoryModal('subCategory', store.category || '기타')}
+                            >
+                                <Text style={styles.categorySelectText}>
+                                    {store.subCategory || '선택하세요'}
+                                </Text>
+                                <Ionicons name="chevron-down" size={16} color={Colors.subText} />
+                            </TouchableOpacity>
+                        </View>
                         <EditableRow
                             label="메모"
                             value={store.memo || ''}
@@ -1389,12 +1424,18 @@ export default function SmartScanResultScreen() {
                             onChangeText={(text) => handleUpdateData('amount', parseInt(text.replace(/[^0-9]/g, '') || '0', 10))}
                             isCurrency
                         />
-                        <EditableRow
-                            label="납부 기한"
-                            value={formatDisplayDateTime(bill.dueDate || '')}
-                            onChangeText={(text) => handleUpdateData('dueDate', normalizeDateInput(text))}
-                            placeholder="YYYY-MM-DD"
-                        />
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>납부 기한</Text>
+                            <TouchableOpacity
+                                style={styles.categorySelect}
+                                onPress={() => openDatePicker(0)}
+                            >
+                                <Text style={styles.categorySelectText}>
+                                    {formatDisplayDateTime(bill.dueDate || '') || 'YYYY-MM-DD'}
+                                </Text>
+                                <Ionicons name="calendar-outline" size={16} color={Colors.subText} />
+                            </TouchableOpacity>
+                        </View>
                         <EditableRow
                             label="가상계좌"
                             value={bill.virtualAccount || ''}
@@ -1621,7 +1662,7 @@ export default function SmartScanResultScreen() {
                     activeOpacity={1}
                     onPress={() => setCategoryModalVisible(false)}
                 >
-                    <View style={styles.categoryModalContent}>
+                    <View style={styles.categoryModalContent} onStartShouldSetResponder={() => true}>
                         <Text style={styles.categoryModalTitle}>
                             {categoryModalType === 'category' ? '카테고리 선택' : '상세 분류 선택'}
                         </Text>
@@ -1666,7 +1707,7 @@ export default function SmartScanResultScreen() {
                     activeOpacity={1}
                     onPress={() => setDatePickerVisible(false)}
                 >
-                    <View style={styles.datePickerContainer}>
+                    <View style={styles.datePickerContainer} onStartShouldSetResponder={() => true}>
                         <Text style={styles.datePickerTitle}>📅 날짜 선택</Text>
                         <Text style={styles.datePickerHint}>하단의 날짜를 터치해서 선택하세요</Text>
 
@@ -1759,6 +1800,17 @@ export default function SmartScanResultScreen() {
                     rawText: dataList.map(d => JSON.stringify(d)).join('\n---\n'),
                     classifiedType: dataList.map(d => d.type).join(', '),
                     classifiedData: dataList
+                }}
+            />
+
+            {/* ✅ 저장 성공 모달 */}
+            <SuccessModal
+                visible={successModalVisible}
+                message={successMessage}
+                autoCloseDelay={1000}
+                onComplete={() => {
+                    setSuccessModalVisible(false);
+                    router.replace('/calendar');
                 }}
             />
         </>

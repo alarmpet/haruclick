@@ -1,4 +1,4 @@
-import { ScannedData, ScanType } from './OpenAIService';
+﻿import { ScannedData, ScanType } from './OpenAIService';
 
 interface ConfidenceBreakdown {
     ocr: number;
@@ -12,10 +12,11 @@ export interface FinalConfidenceResult {
     breakdown: ConfidenceBreakdown;
 }
 
-// 🎯 Mandatory Fields Definition
+// ?렞 Mandatory Fields Definition
 const MANDATORY_FIELDS: Record<ScanType, string[]> = {
     GIFTICON: ['productName', 'expiryDate'], // Removed brandName as mandatory for practical reasons
     INVITATION: ['eventDate', 'eventLocation'],
+    OBITUARY: ['deceased', 'funeralLocation', 'eventDate'],
     STORE_PAYMENT: ['amount', 'merchant', 'date'],
     BANK_TRANSFER: ['amount', 'transactionType'], // targetName usually exists but amount/type are critical
     RECEIPT: ['amount', 'merchant', 'date'],
@@ -102,10 +103,10 @@ export function calculateFinalConfidence(
 
     // 5. Final Calculation
     let finalScore =
-        (0.30 * c_ocr) +
-        (0.35 * c_struct) +
+        (0.35 * c_ocr) +
+        (0.25 * c_struct) +
         (0.20 * c_type) +
-        (0.15 * c_consist);
+        (0.20 * c_consist);
 
     // 6. Hard Clamps (Safety Nets)
     const missingAnyRequired = required.some(field => !(aiResult as any)[field]);
@@ -134,3 +135,4 @@ export function calculateFinalConfidence(
         }
     };
 }
+

@@ -153,7 +153,7 @@ export default function Home() {
                 <View style={styles.quickLinks}>
                     <TouchableOpacity
                         style={styles.quickLink}
-                        onPress={() => router.push('/calendar')}
+                        onPress={() => router.push({ pathname: '/calendar', params: { refresh: Date.now(), date: '' } })} // Quick link도 리프레시
                     >
                         <Ionicons name="calendar-outline" size={20} color={Colors.subText} />
                         <Text style={styles.quickLinkText}>캘린더</Text>
@@ -218,7 +218,7 @@ export default function Home() {
                 <View style={styles.upcomingSection}>
                     <View style={styles.upcomingHeader}>
                         <Text style={styles.upcomingTitle}>📅 다가오는 일정</Text>
-                        <TouchableOpacity onPress={() => router.push('/calendar')}>
+                        <TouchableOpacity onPress={() => router.push({ pathname: '/calendar', params: { refresh: Date.now(), date: '' } })}>
                             <Text style={styles.upcomingMore}>전체보기</Text>
                         </TouchableOpacity>
                     </View>

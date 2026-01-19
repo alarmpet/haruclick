@@ -163,6 +163,7 @@ export async function updateEvent(id: string, updates: any) {
     try {
         const { error } = await supabase.from('events').update(updates).eq('id', id);
         if (error) throw error;
+        invalidateCache(); // ✅ 캐시 무효화
         return { error: null };
     } catch (e: any) {
         console.error('Error updating event:', e);
@@ -175,6 +176,7 @@ export async function updateLedger(id: string, updates: any) {
     try {
         const { error } = await supabase.from('ledger').update(updates).eq('id', id);
         if (error) throw error;
+        invalidateCache(); // ✅ 캐시 무효화
         return { error: null };
     } catch (e: any) {
         console.error('Error updating ledger:', e);
@@ -187,6 +189,7 @@ export async function updateBankTransaction(id: string, updates: any) {
     try {
         const { error } = await supabase.from('bank_transactions').update(updates).eq('id', id);
         if (error) throw error;
+        invalidateCache(); // ✅ 캐시 무효화
         return { error: null };
     } catch (e: any) {
         console.error('Error updating bank transaction:', e);
@@ -464,6 +467,7 @@ export async function deleteEvent(eventId: string) {
         console.error('Error deleting event from Supabase:', error);
         throw error;
     }
+    invalidateCache(); // ✅ 캐시 무효화
     console.log('[deleteEvent] Success');
     return { success: true };
 }
@@ -481,6 +485,7 @@ export async function deleteLedgerItem(itemId: string) {
         console.error('Error deleting ledger item:', error);
         throw error;
     }
+    invalidateCache(); // ✅ 캐시 무효화
     return { success: true };
 }
 
@@ -497,6 +502,7 @@ export async function deleteBankTransaction(itemId: string) {
         console.error('Error deleting bank transaction:', error);
         throw error;
     }
+    invalidateCache(); // ✅ 캐시 무효화
     return { success: true };
 }
 
@@ -643,21 +649,21 @@ export async function saveUnifiedEvent(
                 }
                 const currentDateStr = currentDate.toISOString().split('T')[0];
 
-            const resolvedName =
-                invite.senderName ||
-                invite.mainName ||
-                invite.hostNames?.[0] ||
-                invite.eventLocation ||
-                '이름 없음';
-            const insertData = {
-                user_id: userId,
-                type: invite.eventType || 'wedding',
-                name: resolvedName,
-                event_date: currentDateStr,
-                location: invite.eventLocation,
-                image_url: imageUrl,
-                amount: invite.recommendedAmount || 0,
-                relation: invite.relation || '지인',
+                const resolvedName =
+                    invite.senderName ||
+                    invite.mainName ||
+                    invite.hostNames?.[0] ||
+                    invite.eventLocation ||
+                    '이름 없음';
+                const insertData = {
+                    user_id: userId,
+                    type: invite.eventType || 'wedding',
+                    name: resolvedName,
+                    event_date: currentDateStr,
+                    location: invite.eventLocation,
+                    image_url: imageUrl,
+                    amount: invite.recommendedAmount || 0,
+                    relation: invite.relation || '지인',
                     is_received: false,
                     recurrence_rule: options?.recurrence || null,
                     group_id: groupId,

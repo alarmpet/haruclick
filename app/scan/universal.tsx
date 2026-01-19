@@ -13,7 +13,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Colors } from '../../constants/Colors';
 import { Ionicons } from '@expo/vector-icons';
-import { extractTextFromImage, preprocessRelativeDates } from '../../services/ocr';
+import { extractTextFromImage, preprocessChatScreenshotOcrText } from '../../services/ocr';
 import { analyzeImageText, analyzeImageVisual, ScannedData } from '../../services/ai/OpenAIService';
 import { fetchUrlContent } from '../../services/WebScraperService';
 import { DataStore } from '../../services/DataStore';
@@ -106,34 +106,80 @@ export default function UniversalScannerScreen() {
         return hasPaymentIntent && hasVirtualAccount;
     };
 
+    // Helper for Timeout
+    const timeoutPromise = <T,>(ms: number, promise: Promise<T>, errorMessage = "Time Limit Exceeded"): Promise<T> => {
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                reject(new Error(errorMessage));
+            }, ms);
+            promise
+                .then(res => {
+                    clearTimeout(timer);
+                    resolve(res);
+                })
+                .catch(err => {
+                    clearTimeout(timer);
+                    reject(err);
+                });
+        });
+    };
+
     const processImage = async (uri: string) => {
-        loading.show('Analyzing...');
+        loading.show('이미지 분석 중...');
+        console.log('[Scan] Starting image analysis...');
         try {
-            const ocrResult = await extractTextFromImage(uri);
+            // Stage 1: OCR Text Extraction
+            console.log('[Scan] Stage 1: Extracting text from image...');
+            const ocrResult = await timeoutPromise(30000, extractTextFromImage(uri), 'OCR 추출 시간 초과');
             const ocrText = typeof ocrResult === 'string' ? ocrResult : ocrResult?.text || '';
             const normalizedText = ocrText.trim();
             const textLength = normalizedText.length;
+            console.log(`[Scan] OCR extracted ${textLength} characters`);
+
+            // Stage 2: Text Analysis (if sufficient text)
             if (textLength > 5) {
-                const preprocessed = preprocessRelativeDates(normalizedText);
-                const results = await analyzeImageText(preprocessed);
-                const valid = results.filter(r => r.type !== 'UNKNOWN');
-                if (valid.length > 0) {
-                    handleScanResult(valid, uri);
-                    return;
+                console.log('[Scan] Stage 2: Analyzing text with OpenAI...');
+                console.log('[Scan] Raw OCR text:', normalizedText.substring(0, 300));
+                try {
+                    // Stage 1 Preprocessing: Chat Screenshot Block & Date Resolution
+                    console.log('[Scan] Running Stage 1 Chat Preprocessing...');
+                    const preprocessed = preprocessChatScreenshotOcrText(normalizedText, new Date());
+                    console.log('[Scan] Preprocessed Structure:\n', preprocessed.substring(0, 500) + '...');
+
+                    const results = await timeoutPromise(60000, analyzeImageText(preprocessed), 'OpenAI 텍스트 분석 시간 초과');
+                    const valid = results.filter(r => r.type !== 'UNKNOWN');
+                    if (valid.length > 0) {
+                        console.log(`[Scan] Text analysis success: ${valid.length} result(s)`);
+                        handleScanResult(valid, uri);
+                        return;
+                    }
+                    console.log('[Scan] Text analysis returned UNKNOWN, trying vision...');
+                } catch (textError: any) {
+                    console.warn('[Scan] Text analysis failed:', textError?.message);
+                    // Continue to vision fallback
                 }
             }
+
+            // Stage 4: Vision Analysis (fallback)
+            console.log('[Scan] Stage 4: Analyzing image with OpenAI Vision...');
             const base64 = await readImageAsBase64(uri);
-            const visualResult = await analyzeImageVisual(base64);
-            if (visualResult && visualResult.type !== 'UNKNOWN') {
-                if (visualResult.type === 'BANK_TRANSFER' && isVirtualAccountPaymentText(normalizedText)) {
-                    (visualResult as any).transactionType = 'withdrawal';
+            const visualResults = await timeoutPromise(30000, analyzeImageVisual(base64), 'OpenAI Vision 분석 시간 초과');
+            const validVisual = visualResults.filter(r => r.type !== 'UNKNOWN');
+            if (validVisual.length > 0) {
+                console.log(`[Scan] Vision analysis success: ${validVisual.length} result(s)`);
+                // 가상계좌 결제인 경우 방향 수정
+                for (const vr of validVisual) {
+                    if (vr.type === 'BANK_TRANSFER' && isVirtualAccountPaymentText(normalizedText)) {
+                        (vr as any).transactionType = 'withdrawal';
+                    }
                 }
-                handleScanResult([visualResult], uri);
+                handleScanResult(validVisual, uri);
                 return;
             }
+            console.log('[Scan] Both text and vision analysis failed');
             Alert.alert('분석 실패', '문서 내용을 인식할 수 없습니다.');
         } catch (e: any) {
-            console.error(e);
+            console.error('[Scan] Error:', e?.message || e);
             showError(e.message ?? '이미지 처리 중 오류가 발생했습니다.');
         } finally {
             const logger = getCurrentOcrLogger();
@@ -161,26 +207,30 @@ export default function UniversalScannerScreen() {
         const isUrl = trimmedInput.startsWith('http://') || trimmedInput.startsWith('https://');
 
         loading.show(isUrl ? 'URL 분석 중...' : '텍스트 분석 중...');
+        console.log('[Scan] Starting URL/text analysis...');
         try {
             let textToAnalyze: string;
 
             if (isUrl) {
                 // URL인 경우: 웹페이지 크롤링
-                textToAnalyze = await fetchUrlContent(trimmedInput);
+                console.log('[Scan] Fetching URL content...');
+                textToAnalyze = await timeoutPromise(10000, fetchUrlContent(trimmedInput), 'URL 가져오기 시간 초과');
             } else {
-                // 일반 텍스트인 경우: 직접 분석
-                textToAnalyze = preprocessRelativeDates(trimmedInput);
+                // 일반 텍스트인 경우: 직접 분석 (OpenAI가 날짜 해석)
+                textToAnalyze = trimmedInput;
             }
 
-            const results = await analyzeImageText(textToAnalyze);
+            console.log('[Scan] Analyzing text with OpenAI...');
+            const results = await timeoutPromise(60000, analyzeImageText(textToAnalyze), 'OpenAI 분석 시간 초과');
             const valid = results.filter(r => r.type !== 'UNKNOWN');
             if (valid.length > 0) {
+                console.log(`[Scan] Analysis success: ${valid.length} result(s)`);
                 handleScanResult(valid, isUrl ? trimmedInput : 'text-input');
             } else {
                 Alert.alert('분석 실패', '내용을 분석할 수 없습니다. 다른 형식으로 시도해주세요.');
             }
         } catch (e: any) {
-            console.error(e);
+            console.error('[Scan] Error:', e?.message || e);
             showError(e.message ?? '분석 중 오류가 발생했습니다.');
         } finally {
             loading.hide();

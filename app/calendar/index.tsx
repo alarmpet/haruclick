@@ -100,7 +100,22 @@ export default function CalendarScreen() {
     const currentYear = parseInt(currentDate.split('-')[0], 10);
 
     // Deep Link Init
-    const { date: initialDateParam } = useLocalSearchParams();
+    const { date: initialDateParam, refresh } = useLocalSearchParams();
+
+    // ✅ 리프레시 파라미터 감지하여 상태 초기화 (탭 누르거나 홈에서 캘린더 진입 시)
+    useEffect(() => {
+        if (refresh) {
+            console.log('[Calendar] Refresh triggered');
+            setDayTimelineVisible(false); // 타임라인 닫기
+            setDetailModalVisible(false); // 상세 모달 닫기
+            setViewMode('month'); // 월별 보기로 리셋
+            setAddModalVisible(false);
+            // 필요하다면 오늘 날짜로 이동 (선택 사항)
+            // const today = new Date().toISOString().split('T')[0];
+            // setCurrentDate(today);
+            // setSelectedDate('');
+        }
+    }, [refresh]);
 
     useEffect(() => {
         if (initialDateParam && typeof initialDateParam === 'string') {
@@ -801,8 +816,11 @@ export default function CalendarScreen() {
                     setAddModalVisible(true);
                 }}
                 onEventPress={(event) => {
-                    setSelectedEvent(event);
-                    setDetailModalVisible(true);
+                    // 클릭 시 바로 수정 화면으로 이동 (연필 아이콘과 동일 동작)
+                    setDayTimelineVisible(false);
+                    setEditEvent(event);
+                    setAddModalDate(event.date);
+                    setAddModalVisible(true);
                 }}
                 onEventEdit={(event) => {
                     setDayTimelineVisible(false); // Close timeline if open
