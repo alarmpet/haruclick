@@ -7,11 +7,12 @@ import { Colors } from '../../constants/Colors';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { PieChart, BarChart } from 'react-native-chart-kit';
 import { getCategoryEmoji, getCategoryColor, classifyMerchant, ExpenseCategory } from '../../services/CategoryClassifier';
+import { CategoryGroupType } from '../../constants/categories';
 
 const screenWidth = Dimensions.get('window').width;
 
 interface CategoryData {
-    category: ExpenseCategory;
+    category: string;
     amount: number;
     count: number;
 }
@@ -46,15 +47,19 @@ export default function StatsScreen() {
                 .order('transaction_date', { ascending: false });
 
             // Combine and process
-            const allExpenses: { date: string; amount: number; name: string; category?: string }[] = [];
+            const allExpenses: { date: string; amount: number; name: string; category?: string; categoryGroup?: CategoryGroupType }[] = [];
 
             (ledger || []).forEach((item: any) => {
-                if (item.category !== '수입' && item.category !== '입금') {
+                const isIncomeOrTransfer = item.category_group === 'income' || item.category_group === 'asset_transfer';
+                const isLegacyIncome = item.category === '수입' || item.category === '입금' || item.category === '이체' || item.category === '저축';
+
+                if (!isIncomeOrTransfer && !isLegacyIncome) {
                     allExpenses.push({
                         date: item.transaction_date?.split('T')[0] || '',
                         amount: Math.abs(item.amount || 0),
                         name: item.merchant_name || '',
-                        category: item.category
+                        category: item.category,
+                        categoryGroup: item.category_group
                     });
                 }
             });
@@ -64,7 +69,8 @@ export default function StatsScreen() {
                     allExpenses.push({
                         date: item.transaction_date?.split('T')[0] || '',
                         amount: Math.abs(item.amount || 0),
-                        name: item.receiver_name || ''
+                        name: item.receiver_name || '',
+                        category: item.category // Bank transactions might have categories now
                     });
                 }
             });
@@ -73,12 +79,13 @@ export default function StatsScreen() {
             const now = new Date();
             const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-            const categoryMap = new Map<ExpenseCategory, CategoryData>();
+            const categoryMap = new Map<string, CategoryData>();
             let total = 0;
 
             allExpenses.forEach(expense => {
                 if (expense.date.startsWith(currentMonth)) {
-                    const cat = classifyMerchant(expense.name);
+                    // ✅ Priority: Stored Category > Classify Merchant
+                    const cat = expense.category || classifyMerchant(expense.name);
                     const existing = categoryMap.get(cat) || { category: cat, amount: 0, count: 0 };
                     existing.amount += expense.amount;
                     existing.count += 1;

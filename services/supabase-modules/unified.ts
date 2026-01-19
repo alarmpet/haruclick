@@ -2,6 +2,7 @@ import { supabase, invalidateCache } from './client';
 import { scheduleEventNotification } from '../notifications';
 import { classifyMerchant } from '../CategoryClassifier';
 import { ScannedData, StorePaymentResult, BankTransactionResult, InvitationResult, GifticonResult, TransferResult, ReceiptResult, BillResult, SocialResult, AppointmentResult } from '../ai/OpenAIService';
+import { CATEGORY_MAP, CategoryGroupType } from '../../constants/categories';
 
 /**
  * AI에서 반환된 날짜 형식 (예: "2023-01-11 18:35")을 
@@ -29,6 +30,25 @@ function toISODate(dateStr: string | undefined): string {
     }
 
     return parsed.toISOString();
+}
+
+/**
+ * 카테고리 그룹을 결정하는 헬퍼 함수
+ */
+function determineCategoryGroup(category: string | undefined, type?: string): CategoryGroupType {
+    if (!category) return 'variable_expense'; // Default
+
+    // 1. 직접 매핑 확인
+    if (CATEGORY_MAP[category]) {
+        return CATEGORY_MAP[category].group;
+    }
+
+    // 2. 수입/이체 키워드 확인
+    if (category.includes('수입') || category.includes('용돈') || category.includes('급여')) return 'income';
+    if (category.includes('이체') || category.includes('저축') || category.includes('투자')) return 'asset_transfer';
+    if (category.includes('고정') || category.includes('공과금') || category.includes('월세')) return 'fixed_expense';
+
+    return 'variable_expense';
 }
 
 export async function saveUnifiedEvent(
@@ -213,15 +233,19 @@ export async function saveUnifiedEvent(
         } else if (data.type === 'STORE_PAYMENT') {
             const pay = data as StorePaymentResult;
             console.log('[saveUnifiedEvent] ledger 테이블 INSERT 시도...');
+            const category = pay.category || classifyMerchant(pay.merchant);
+            const categoryGroup = (pay as any).categoryGroup || determineCategoryGroup(category);
+
             const { error } = await supabase.from('ledger').insert({
                 user_id: userId,
                 transaction_date: toISODate(pay.date),
                 amount: pay.amount,
                 merchant_name: pay.merchant,
-                category: pay.category || classifyMerchant(pay.merchant),
+                category: category,
                 sub_category: (pay as any).subCategory,
+                category_group: categoryGroup, // ✅ New field
                 image_url: imageUrl,
-                memo: (pay as any).memo || `[자동분류] ${pay.category}${(pay as any).subCategory ? ' > ' + (pay as any).subCategory : ''}`,
+                memo: (pay as any).memo || `[자동분류] ${category}${(pay as any).subCategory ? ' > ' + (pay as any).subCategory : ''}`,
                 raw_text: JSON.stringify(data)
             });
             if (error) throw error;
@@ -233,13 +257,17 @@ export async function saveUnifiedEvent(
 
             if ((trans as any).isUtility) {
                 // 공과금/고정지출 -> Ledger로 저장
+                const category = (trans as any).category || (classifyMerchant(trans.targetName) === '기타' ? '고정지출' : classifyMerchant(trans.targetName));
+                const categoryGroup = (trans as any).categoryGroup || determineCategoryGroup(category);
+
                 const { error } = await supabase.from('ledger').insert({
                     user_id: userId,
                     transaction_date: toISODate(trans.date),
                     amount: trans.amount,
                     merchant_name: trans.targetName,
-                    category: (trans as any).category || (classifyMerchant(trans.targetName) === '기타' ? '고정지출' : classifyMerchant(trans.targetName)),
+                    category: category,
                     sub_category: (trans as any).subCategory,
+                    category_group: categoryGroup, // ✅ New field
                     image_url: imageUrl,
                     memo: `[공과금] ${trans.transactionType === 'deposit' ? '입금' : '출금'}`,
                     raw_text: JSON.stringify(data)
@@ -265,12 +293,16 @@ export async function saveUnifiedEvent(
 
         } else if ((data as any).type === 'TRANSFER') {
             const transfer = data as unknown as TransferResult;
+            const category = (transfer as any).isReceived ? '수입' : '이체';
+            const categoryGroup = (transfer as any).isReceived ? 'income' : 'asset_transfer';
+
             const { error } = await supabase.from('ledger').insert({
                 user_id: userId,
                 transaction_date: new Date().toISOString(),
                 amount: transfer.amount,
                 merchant_name: transfer.senderName,
-                category: (transfer as any).isReceived ? '수입' : '이체',
+                category: category,
+                category_group: categoryGroup, // ✅ New field
                 memo: (transfer as any).memo || `[송금] ${(transfer as any).isReceived ? '받음' : '보냄'}`,
                 image_url: imageUrl
             });
@@ -282,15 +314,19 @@ export async function saveUnifiedEvent(
             // ===================================
         } else if ((data as any).type === 'RECEIPT') {
             const receipt = data as unknown as ReceiptResult;
+            const category = receipt.category || classifyMerchant(receipt.merchant);
+            const categoryGroup = (receipt as any).categoryGroup || determineCategoryGroup(category);
+
             const { error } = await supabase.from('ledger').insert({
                 user_id: userId,
                 transaction_date: receipt.date || new Date().toISOString(),
                 amount: receipt.amount,
                 merchant_name: receipt.merchant,
-                category: receipt.category || classifyMerchant(receipt.merchant),
+                category: category,
                 sub_category: (receipt as any).subCategory, // ✅ 소분류 추가
+                category_group: categoryGroup, // ✅ New field
                 image_url: imageUrl,
-                memo: `[자동입력] ${receipt.category || classifyMerchant(receipt.merchant)}`
+                memo: `[자동입력] ${category}`
             });
             if (error) throw error;
 
@@ -317,6 +353,7 @@ export async function saveUnifiedEvent(
                 amount: social.amount,
                 merchant_name: social.location || '모임 장소',
                 category: '식비',
+                category_group: 'variable_expense', // ✅ Default for social meal
                 image_url: imageUrl,
                 memo: `[인맥지출] 멤버: ${social.members.join(', ')}`
             });

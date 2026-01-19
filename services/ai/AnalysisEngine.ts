@@ -1,8 +1,9 @@
 import { GENERATE_ANALYSIS_PROMPT, SYSTEM_PROMPT } from './PromptTemplates';
 import { fetchUserStats } from '../supabase';
-import { extractTextFromImage } from '../ocr';
+import { extractTextFromImage, preprocessChatScreenshotOcrText } from '../ocr';
 import { getCurrentOcrLogger } from '../OcrLogger';
 import { analyzeImageText, InvitationResult } from './OpenAIService';
+import { classifyImageType, ImageType } from '../ImageClassifier';
 
 export interface AnalysisResult {
     recommendedAmount: number;
@@ -27,9 +28,9 @@ export interface CommunityReaction {
  * 실제 OCR 수행 (ML Kit 사용)
  * ✅ Mock 제거됨
  */
-async function performOCR(imageUri: string): Promise<string> {
+async function performOCR(imageUri: string, classification: ImageType = ImageType.UNKNOWN): Promise<string> {
     try {
-        const result = await extractTextFromImage(imageUri);
+        const result = await extractTextFromImage(imageUri, classification);
         if (typeof result === 'string') return result || "";
         return result?.text || "";
     } catch (e) {
@@ -108,11 +109,19 @@ async function analyzeWithAI(ocrText: string, relation: string): Promise<Analysi
 
 export async function analyzeInvitation(imageUri: string, relation: string): Promise<AnalysisResult> {
     try {
-    // 1. OCR로 텍스트 추출
-    const ocrText = await performOCR(imageUri);
+        // 1. 이미지 분류 (스크린샷 여부 확인)
+        const { type } = await classifyImageType(imageUri);
 
-    // 2. AI 분석 및 금액 계산
-    const result = await analyzeWithAI(ocrText, relation);
+        // 2. OCR로 텍스트 추출
+        let ocrText = await performOCR(imageUri, type);
+
+        // 3. 스크린샷인 경우에만 채팅 전용 전처리 적용
+        if (type === ImageType.SCREENSHOT) {
+            ocrText = preprocessChatScreenshotOcrText(ocrText);
+        }
+
+        // 2. AI 분석 및 금액 계산
+        const result = await analyzeWithAI(ocrText, relation);
 
         return result;
     } finally {

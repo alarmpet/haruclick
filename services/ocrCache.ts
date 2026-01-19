@@ -8,16 +8,16 @@ import { supabase } from '../services/supabase';
 export async function getOcrCache(hash: string): Promise<any | null> {
     try {
         const { data, error } = await supabase
-            .from('ocr_cache')
+            .from('ocr_text_cache')
             .select('result')
             .eq('image_hash', hash)
             .single();
         if (error && error.code !== 'PGRST116') { // row not found
-            console.warn('[OCR Cache] fetch error:', error);
+            console.warn('[OCR Text Cache] fetch error:', error);
         }
         return data?.result ?? null;
     } catch (e) {
-        console.error('[OCR Cache] get error', e);
+        console.error('[OCR Text Cache] get error', e);
         return null;
     }
 }
@@ -25,7 +25,7 @@ export async function getOcrCache(hash: string): Promise<any | null> {
 export async function setOcrCache(hash: string, result: any): Promise<void> {
     try {
         const { error } = await supabase
-            .from('ocr_cache')
+            .from('ocr_text_cache')
             .upsert({ image_hash: hash, result }, { onConflict: 'image_hash' });
         if (error) {
             console.warn('[OCR Cache] upsert error:', error);

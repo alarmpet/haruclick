@@ -25,9 +25,9 @@ import { Colors } from '../constants/Colors';
 import { Ionicons } from '@expo/vector-icons';
 
 import SpinnerTimePicker from './SpinnerTimePicker';
-// import { Colors } from '../constants/Colors'; // Removed duplicate
 import { saveUnifiedEvent, updateUnifiedEvent } from '../services/supabase';
 import { RecommendationEngine, RecommendationResult } from '../services/RecommendationEngine';
+import { CATEGORY_MAP, CATEGORY_GROUPS, getReviewCategoryList, CategoryGroupType } from '../constants/categories';
 
 const { width } = Dimensions.get('window');
 
@@ -61,12 +61,6 @@ const RELATIONS = [
     '직계가족', '형제자매', '가족', '절친', '친한 친구',
     '직장 동료', '대학 동기', '지인', '거래처'
 ];
-
-// 가계부 카테고리
-const LEDGER_CATEGORIES = {
-    expense: ['식비', '교통/차량', '쇼핑', '생활', '주거/통신', '의료/건강', '금융', '문화/여가', '교육', '경조사', '기타'],
-    income: ['월급', '용돈', '이월', '자산인출', '금융수입', '기타']
-};
 
 // ✅ 현재 시간 기준 가장 가까운 정시 계산
 const getNearestHour = () => {
@@ -120,7 +114,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
     const [selectedAlarm, setSelectedAlarm] = useState<number | null>(null);
 
     // Ledger specific
-    const [ledgerType, setLedgerType] = useState<'income' | 'expense'>('expense');
+    const [ledgerGroup, setLedgerGroup] = useState<CategoryGroupType>('variable_expense');
     const [ledgerCategory, setLedgerCategory] = useState('식비');
 
     // ✅ 커스텀 모달 상태 (Android Alert 제한 해결)
@@ -166,7 +160,6 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                 setCeremonyType(foundType ? foundType.key : 'wedding');
 
                 // Time fields
-                // Check both camelCase and snake_case just in case, though DB is likely snake_case
                 if (editEvent.start_time || editEvent.startTime) {
                     setStartTime(editEvent.start_time || editEvent.startTime);
                     setIsAllDay(false);
@@ -178,9 +171,17 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                 // Ledger fields
                 if (editEvent.category === 'expense' || editEvent.category === 'income' || editEvent.source === 'ledger') {
                     setCategory('expense');
-                    setLedgerType(editEvent.isReceived ? 'income' : 'expense');
                     // Try to finding mapped category or default
-                    setLedgerCategory(editEvent.sub_category || editEvent.type || '기타');
+                    const catName = editEvent.sub_category || editEvent.type || '기타';
+                    setLedgerCategory(catName);
+
+                    // Derive group from category map if possible, else default
+                    const mapped = CATEGORY_MAP[catName];
+                    if (mapped) {
+                        setLedgerGroup(mapped.group);
+                    } else {
+                        setLedgerGroup(editEvent.isReceived ? 'income' : 'variable_expense');
+                    }
                 }
             } else {
                 // Create Mode: Reset to defaults or initial props
@@ -189,7 +190,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                 if (initialCategory) setCategory(initialCategory);
             }
         }
-    }, [visible, editEvent]); // Removed initialDate/Category from dependency to prevent loop, usually stable props
+    }, [visible, editEvent]);
 
     // 경조사: 관계/타입 변경 시 추천 금액
     useEffect(() => {
@@ -240,9 +241,10 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
 
                 if (category === 'expense') {
                     updates.amount = parseInt(amount) || 0;
-                    updates.type = ledgerCategory; // Store category in type or dedicated field if available
-                    updates.category = 'expense'; // Always expense category for DB, handled by isReceived
-                    updates.is_received = ledgerType === 'income';
+                    updates.type = ledgerCategory;
+                    updates.category = 'expense';
+                    updates.is_received = ledgerGroup === 'income';
+                    updates.category_group = ledgerGroup; // New Field
                 }
 
                 // Ledger specific
@@ -293,7 +295,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                         date: date,
                     };
 
-                    if (ledgerType === 'income') {
+                    if (ledgerGroup === 'income') {
                         await saveUnifiedEvent({
                             ...commonData,
                             type: 'SOCIAL',
@@ -302,6 +304,8 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                             members: [], // Required for SocialResult
                         } as any, undefined, { // Using any cast temporarily if strict type checking fails due to discriminated union complexity, or cleaner: as SocialResult
                             category: 'expense',
+                            categoryGroup: ledgerGroup, // New Field
+                            isReceived: true
                         });
                     } else {
                         await saveUnifiedEvent({
@@ -312,6 +316,8 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                             category: ledgerCategory,
                         } as any, undefined, {
                             category: 'expense',
+                            categoryGroup: ledgerGroup, // New Field
+                            isReceived: false
                         });
                     }
                 } else {
@@ -370,7 +376,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
         setSelectedAlarm(null);
         setSelectedAlarm(null);
         setIsEndTimeManuallySet(false);
-        setLedgerType('expense');
+        setLedgerGroup('variable_expense');
         setLedgerCategory('식비');
         // setAmount('0'); // Removed duplicate setAmount - handled above or specific to category logic if needed, but '100000' is default for ceremony which is safe reset
 
@@ -666,20 +672,28 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
     // ==================== 가계부 UI (New) ====================
     const renderLedgerUI = () => (
         <>
-            {/* 수입/지출 토글 */}
+            {/* 그룹 선택 (고정/변동/수입/이체) */}
             <View style={styles.ledgerToggleContainer}>
-                <TouchableOpacity
-                    style={[styles.ledgerToggleBtn, ledgerType === 'expense' && { backgroundColor: '#FF6B6B' }]}
-                    onPress={() => setLedgerType('expense')}
-                >
-                    <Text style={[styles.ledgerToggleText, ledgerType === 'expense' && { color: '#fff' }]}>지출</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.ledgerToggleBtn, ledgerType === 'income' && { backgroundColor: '#4A90D9' }]}
-                    onPress={() => setLedgerType('income')}
-                >
-                    <Text style={[styles.ledgerToggleText, ledgerType === 'income' && { color: '#fff' }]}>수입</Text>
-                </TouchableOpacity>
+                {CATEGORY_GROUPS.map(group => (
+                    <TouchableOpacity
+                        key={group.value}
+                        style={[
+                            styles.ledgerToggleBtn,
+                            ledgerGroup === group.value && { backgroundColor: group.value === 'income' ? '#4A90D9' : (group.value === 'asset_transfer' ? '#A0A0A0' : '#FF6B6B') },
+                            { flex: 1, marginHorizontal: 2 } // Adjust layout
+                        ]}
+                        onPress={() => {
+                            setLedgerGroup(group.value);
+                            // Set default category for this group
+                            const firstCat = getReviewCategoryList(group.value)[0];
+                            if (firstCat) setLedgerCategory(firstCat.category);
+                        }}
+                    >
+                        <Text style={[styles.ledgerToggleText, ledgerGroup === group.value && { color: '#fff' }, { fontSize: 12 }]}>
+                            {group.label.split(' ')[0]}
+                        </Text>
+                    </TouchableOpacity>
+                ))}
             </View>
 
             {/* 날짜 */}
@@ -692,7 +706,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             <Text style={styles.label}>💰 금액</Text>
             <View style={styles.amountRow}>
                 <TextInput
-                    style={[styles.amountInput, { color: ledgerType === 'income' ? '#4A90D9' : '#FF6B6B' }]}
+                    style={[styles.amountInput, { color: ledgerGroup === 'income' ? '#4A90D9' : '#FF6B6B' }]}
                     value={amount}
                     onChangeText={setAmount}
                     keyboardType="number-pad"
@@ -706,29 +720,32 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             <Text style={styles.label}>📝 내역</Text>
             <TextInput
                 style={styles.input}
-                placeholder={ledgerType === 'income' ? "입금처 (예: 월급)" : "사용처 (예: 스타벅스)"}
+                placeholder={ledgerGroup === 'income' ? "입금처 (예: 월급)" : "사용처 (예: 스타벅스)"}
                 placeholderTextColor="#666"
                 value={title}
                 onChangeText={setTitle}
             />
 
-            {/* 분류 (카테고리) */}
+            {/* 분류 (카테고리) - 선택된 그룹에 맞는 것만 표시 */}
             <Text style={styles.label}>📂 분류</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.relationScroll}>
-                {LEDGER_CATEGORIES[ledgerType].map((cat) => (
+                {getReviewCategoryList(ledgerGroup).map((catSpec) => (
                     <TouchableOpacity
-                        key={cat}
+                        key={catSpec.category}
                         style={[
                             styles.relationChip,
-                            ledgerCategory === cat && { backgroundColor: ledgerType === 'income' ? '#4A90D9' : '#FF6B6B', borderColor: 'transparent' },
+                            ledgerCategory === catSpec.category && {
+                                backgroundColor: ledgerGroup === 'income' ? '#4A90D9' : '#FF6B6B',
+                                borderColor: 'transparent'
+                            },
                         ]}
-                        onPress={() => setLedgerCategory(cat)}
+                        onPress={() => setLedgerCategory(catSpec.category)}
                     >
                         <Text style={[
                             styles.relationChipText,
-                            ledgerCategory === cat && { color: '#fff' },
+                            ledgerCategory === catSpec.category && { color: '#fff' },
                         ]}>
-                            {cat}
+                            {catSpec.category}
                         </Text>
                     </TouchableOpacity>
                 ))}
@@ -979,10 +996,13 @@ const styles = StyleSheet.create({
     ceremonyType: {
         flexDirection: 'row',
         alignItems: 'center',
-        // ... (existing styles)
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#444',
+        gap: 6,
     },
-
-
     ceremonyTypeText: { fontFamily: 'Pretendard-Medium', fontSize: 13, color: '#888' },
 
 

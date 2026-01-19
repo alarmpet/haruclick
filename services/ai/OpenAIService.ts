@@ -8,6 +8,8 @@ const PIPELINE_VERSION = "2.3.0-structured";
 // Core Types (7) + Unknown
 export type ScanType = 'GIFTICON' | 'INVITATION' | 'OBITUARY' | 'APPOINTMENT' | 'STORE_PAYMENT' | 'BANK_TRANSFER' | 'BILL' | 'SOCIAL' | 'RECEIPT' | 'TRANSFER' | 'UNKNOWN';
 
+import { APP_CATEGORIES, CATEGORY_MAP, CategoryGroupType } from '../../constants/categories';
+
 export interface BaseAnalysisResult {
     type: ScanType;
     subtype?: string;
@@ -18,6 +20,7 @@ export interface BaseAnalysisResult {
     raw_text?: string;
     senderName?: string;
     date?: string;
+    categoryGroup?: CategoryGroupType;
     confidence_breakdown?: {
         ocr: number;
         struct: number;
@@ -41,19 +44,6 @@ export interface ReceiptResult extends Omit<StorePaymentResult, 'type'> { type: 
 export interface TransferResult extends BaseAnalysisResult { type: 'TRANSFER'; amount: number; isReceived?: boolean; memo?: string; } // Legacy alias
 
 const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY ?? Constants.expoConfig?.extra?.EXPO_PUBLIC_OPENAI_API_KEY;
-
-const APP_CATEGORIES: Record<string, string[]> = {
-    '식비': ['식료품', '외식/배달', '카페/베이커리'],
-    '주거/통신/광열': ['주거/관리비', '통신비', '전기/가스/수도'],
-    '교통/차량': ['대중교통', '자차/유지', '주유', '택시'],
-    '문화/여가': ['OTT/구독', '여행', '문화생활', '게임'],
-    '쇼핑/생활': ['온라인', '오프라인', '생활용품'],
-    '의료/건강': ['병원', '약국', '건강식품'],
-    '교육': ['학원/과외', '서적', '온라인강의'],
-    '비소비지출/금융': ['이자/세금', '보험', '경조사', '기부'],
-    '인맥': ['경조사', '선물', '모임'],
-    '기타': ['기타', '미분류'],
-};
 
 const CATEGORY_KEYS = Object.keys(APP_CATEGORIES);
 
@@ -261,6 +251,8 @@ function buildSystemPrompt(options: {
 
     return `
 You are a financial AI expert for Korean financial and event documents.
+TODAY = ${options.referenceDate} (${options.dayOfWeek})
+Use TODAY only if no anchor date exists.
 ${inputHint}
 
 OUTPUT
@@ -520,9 +512,22 @@ function extractInvitationMainNames(text: string): string[] {
 // Text Analysis (Structured Extraction)
 // ========================================
 
-export async function analyzeImageText(text: string): Promise<ScannedData[]> {
+export async function analyzeImageText(text: string, options?: { ocrScore?: number }): Promise<ScannedData[]> {
     const logger = getCurrentOcrLogger();
     if (!OPENAI_API_KEY) throw new Error("OpenAI API Key is missing.");
+
+    // Stage 4: Low Quality Filter
+    if ((options?.ocrScore ?? 100) < 20 && text.length < 30) {
+        console.warn(`[OpenAI Text] Skipped due to low quality (Score: ${options?.ocrScore}, Len: ${text.length})`);
+        logger?.logStage({
+            stage: 'openai_text',
+            stageOrder: 2,
+            success: false,
+            fallbackReason: 'low_quality_ocr',
+            metadata: { score: options?.ocrScore, length: text.length }
+        });
+        throw new Error("OCR Quality too low for text analysis.");
+    }
 
     try {
         const controller = new AbortController();
@@ -748,15 +753,50 @@ export async function analyzeImageText(text: string): Promise<ScannedData[]> {
     } catch (e: any) {
         // 상세 에러 로깅 추가
         console.error('[OpenAI Text] Stage 2 Exception:', e?.message || e);
+
+        // Stage 5: Logging with Metadata
         logger?.logStage({
             stage: 'openai_text',
             stageOrder: 2,
             success: false,
             fallbackReason: 'exception',
-            metadata: { error: e?.message || String(e) }
+            metadata: {
+                error: e?.message || String(e),
+                responseSnippet: e?.responseSnippet // If we attached this in the try block
+            }
         });
+
+        // Stage 5: Regex Fallback (Simple Date/Amount Extraction)
+        if (e?.message?.includes('JSON') || e?.message?.includes('parsing')) {
+            console.log('[OpenAI Text] JSON Parse Failed -> Attempting Regex Fallback');
+            const fallbackData = attemptRegexFallback(text);
+            if (fallbackData) {
+                return [fallbackData];
+            }
+        }
+
         throw e; // 예외를 다시 throw하여 GifticonAnalysisService에서 처리하도록 함
     }
+}
+
+function attemptRegexFallback(text: string): ScannedData | null {
+    try {
+        const dateMatch = text.match(/202\d[./-]\d{1,2}[./-]\d{1,2}/);
+        const amountMatch = text.match(/([0-9,]+)\s?원/);
+
+        if (dateMatch || amountMatch) {
+            return {
+                type: 'UNKNOWN',
+                confidence: 0.2, // Low confidence
+                evidence: ['regex_fallback'],
+                warnings: ['json_parse_failed', 'regex_fallback'],
+                date: dateMatch ? dateMatch[0] : undefined,
+                raw_text: text,
+                source: 'PHOTO'
+            } as ScannedData;
+        }
+    } catch (e) { /* ignore */ }
+    return null;
 }
 
 // ========================================

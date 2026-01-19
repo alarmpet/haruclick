@@ -29,7 +29,7 @@ async function preprocessImage(uri: string, targetWidth: number): Promise<string
     }
 }
 
-async function buildAdaptiveVariants(uri: string): Promise<string[]> {
+async function buildAdaptiveVariants(uri: string, classification: ImageType = ImageType.UNKNOWN): Promise<string[]> {
     if (!isPreprocessEnabled()) return [uri];
 
     return new Promise<{ width: number, height: number }>((resolve) => {
@@ -37,26 +37,32 @@ async function buildAdaptiveVariants(uri: string): Promise<string[]> {
     }).then(async ({ width }) => {
         const variants: string[] = [];
 
-        // Strategy: Try 1280px (optimized) FIRST. 
-        // ML Kit works best/fastest around this size.
-        // Original is often too large (12MP+), causing timeouts.
+        // Strategy: 
+        // 1. 1280px (Fastest/ML Kit optimized)
+        // 2. 1920px (Better for Receipts/Documents) - NEW
+        // 3. Original (Fallback)
+        // 4. 2048px (High Res)
 
         let resized1280: string | null = null;
+        let resized1920: string | null = null;
         let resized2048: string | null = null;
 
         if (width > 0) {
             if (Math.abs(width - 1280) > 200) {
-                console.log('[OCR] Preparing 1280px variant');
                 resized1280 = await preprocessImage(uri, 1280);
             }
+            // Add 1920px for non-screenshots (Receipts usually benefit from 1080p width)
+            if (classification !== ImageType.SCREENSHOT && Math.abs(width - 1920) > 200) {
+                console.log('[OCR] Preparing 1920px variant (Receipt Mode)');
+                resized1920 = await preprocessImage(uri, 1920);
+            }
             if (Math.abs(width - 2048) > 200) {
-                console.log('[OCR] Preparing 2048px variant');
                 resized2048 = await preprocessImage(uri, 2048);
             }
         }
 
-        // Order: 1280 -> Original -> 2048
         if (resized1280) variants.push(resized1280);
+        if (resized1920) variants.push(resized1920); // Prioritize 1920 for receipts
         variants.push(uri);
         if (resized2048) variants.push(resized2048);
 
@@ -131,6 +137,11 @@ export function correctOcrTypos(text: string): string {
                 .replace(/^I/, '1')
                 .replace(/^l/, '1')
                 .replace(/^B/, '8');
+        }
+
+        // Dangling comma fix (e.g., 12,50 -> 12,500)
+        if (/^\d{1,3},\d{2}$/.test(token)) {
+            return token + '0';
         }
 
         return token;
@@ -523,17 +534,48 @@ async function getImageSizeKb(uri: string): Promise<number | undefined> {
     return undefined;
 }
 
-export function filterByConfidence(result: any, threshold: number): string {
+function buildStructuredOcrText(result: any, threshold: number): string {
     if (!result?.blocks) return result?.text || '';
-    const filtered = result.blocks.filter((block: any) => {
-        const txt = block.text || '';
-        const isVital = /\d/.test(txt) || /[원$]/.test(txt);
-        if (typeof block.confidence === 'number' && block.confidence < threshold) {
-            return isVital;
+
+    const isVitalText = (txt: string) => /\d/.test(txt) || /[원$]/.test(txt) || /(금액|수량|합계|결제|주문|배달팁)/.test(txt);
+    const lines: string[] = [];
+
+    for (const block of result.blocks) {
+        const blockText = block?.text || '';
+        const blockConfidence = typeof block?.confidence === 'number' ? block.confidence : undefined;
+        const blockLines = Array.isArray(block?.lines) ? block.lines : [];
+        const keepWholeBlock = blockConfidence !== undefined && blockConfidence >= threshold;
+
+        if (keepWholeBlock && blockText) {
+            lines.push(blockText);
+            continue;
         }
-        return true;
-    });
-    return filtered.map((b: any) => b.text).join('\n').trim();
+
+        const keptLines: string[] = [];
+
+        for (const line of blockLines) {
+            const lineText = line?.text || '';
+            if (!lineText) continue;
+
+            const lineConfidence = typeof line?.confidence === 'number' ? line.confidence : undefined;
+            const hasLowConfidence = lineConfidence !== undefined && lineConfidence < threshold;
+            if (!hasLowConfidence || isVitalText(lineText)) {
+                keptLines.push(lineText);
+            }
+        }
+
+        if (keptLines.length > 0) {
+            lines.push(keptLines.join('\n'));
+        } else if (blockText && isVitalText(blockText)) {
+            lines.push(blockText);
+        }
+    }
+
+    return lines.join('\n').trim();
+}
+
+export function filterByConfidence(result: any, threshold: number): string {
+    return buildStructuredOcrText(result, threshold);
 }
 
 /**
@@ -567,7 +609,7 @@ export async function extractTextFromImage(uri: string, classification: ImageTyp
             return { text: cached as string, score: 80 };
         }
 
-        const variants = await buildAdaptiveVariants(uri);
+        const variants = await buildAdaptiveVariants(uri, classification);
         console.log(`[OCR] Variants generated: ${variants.length}`);
 
         let bestText = "";
@@ -899,4 +941,12 @@ export function preprocessChatScreenshotOcrText(
     }
 
     return out.join('\n');
+}
+
+export function maybePreprocessChatText(text: string): string {
+    // Check for chat patterns: [Web발신] or date headers like (어제)
+    if (/(\[Web발신\])|(\((어제|오늘|그저께|모레)\))/.test(text)) {
+        return preprocessChatScreenshotOcrText(text, new Date());
+    }
+    return text;
 }

@@ -3,6 +3,7 @@ import { calculateFinalConfidence } from './ai/ConfidenceCalculator';
 import * as FileSystem from 'expo-file-system/legacy';
 import { getCurrentOcrLogger } from './OcrLogger';
 import { OcrError, OcrErrorType } from './OcrErrors';
+import { maybePreprocessChatText } from './ocr';
 
 // Helper for Timeouts
 const timeoutPromise = <T>(ms: number, promise: Promise<T>, errorType: OcrErrorType = OcrErrorType.TIMEOUT): Promise<T> => {
@@ -68,14 +69,15 @@ export class GifticonAnalysisService {
      * Flow: Stage 2 (Text, Timeout 15s) -> Validate -> Stage 4 (Vision, Timeout 20s) -> Fallback
      * ✅ 다중 거래 지원을 위해 ScannedData[] 반환
      */
-    async analyzeWithAI(text: string, imageUri?: string, ocrScore: number = 50): Promise<ScannedData[]> {
+    async analyzeWithAI(rawText: string, imageUri?: string, ocrScore: number = 50): Promise<ScannedData[]> {
         const logger = getCurrentOcrLogger();
+        const text = maybePreprocessChatText(rawText);
         console.log(`[Orchestrator] Starting Analysis... (OCR Score: ${ocrScore})`);
 
         // 1. Stage 2: Text Analysis (Timeout 15s)
         let textResults: ScannedData[] = [];
         try {
-            const rawResults = await timeoutPromise<ScannedData[]>(25000, analyzeImageText(text));
+            const rawResults = await timeoutPromise<ScannedData[]>(25000, analyzeImageText(text, { ocrScore }));
             textResults = rawResults || [];
 
             // ✅ OpenAI 신뢰도 유지 (이중 계산 제거) - breakdown만 추가

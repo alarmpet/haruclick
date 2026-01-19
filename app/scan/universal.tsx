@@ -13,7 +13,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Colors } from '../../constants/Colors';
 import { Ionicons } from '@expo/vector-icons';
-import { extractTextFromImage, preprocessChatScreenshotOcrText } from '../../services/ocr';
+import { extractTextFromImage, maybePreprocessChatText } from '../../services/ocr';
 import { analyzeImageText, analyzeImageVisual, ScannedData } from '../../services/ai/OpenAIService';
 import { fetchUrlContent } from '../../services/WebScraperService';
 import { DataStore } from '../../services/DataStore';
@@ -141,12 +141,12 @@ export default function UniversalScannerScreen() {
                 console.log('[Scan] Stage 2: Analyzing text with OpenAI...');
                 console.log('[Scan] Raw OCR text:', normalizedText.substring(0, 300));
                 try {
-                    // Stage 1 Preprocessing: Chat Screenshot Block & Date Resolution
-                    console.log('[Scan] Running Stage 1 Chat Preprocessing...');
-                    const preprocessed = preprocessChatScreenshotOcrText(normalizedText, new Date());
+                    console.log('[Scan] Running Stage 1 Chat Preprocessing (if needed)...');
+                    const preprocessed = maybePreprocessChatText(normalizedText);
                     console.log('[Scan] Preprocessed Structure:\n', preprocessed.substring(0, 500) + '...');
 
-                    const results = await timeoutPromise(60000, analyzeImageText(preprocessed), 'OpenAI 텍스트 분석 시간 초과');
+                    const ocrScore = (typeof ocrResult === 'object' && ocrResult?.score) ? ocrResult.score : 0;
+                    const results = await timeoutPromise(60000, analyzeImageText(preprocessed, { ocrScore }), 'OpenAI 텍스트 분석 시간 초과');
                     const valid = results.filter(r => r.type !== 'UNKNOWN');
                     if (valid.length > 0) {
                         console.log(`[Scan] Text analysis success: ${valid.length} result(s)`);

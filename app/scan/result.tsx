@@ -16,20 +16,10 @@ import { RecommendationTable } from '../../components/RecommendationTable'; // �
 import { DataStore } from '../../services/DataStore';
 import { FeedbackModal } from '../../components/FeedbackModal';
 import { SuccessModal } from '../../components/SuccessModal';
+import { CATEGORY_MAP, CATEGORY_GROUPS, getReviewCategoryList, CategoryGroupType } from '../../constants/categories';
 
-// ✅ 카테고리 상수 (대분류 -> 소분류 매핑)
-const CATEGORIES: Record<string, string[]> = {
-    '식비': ['식료품', '외식/배달', '카페/베이커리'],
-    '주거/통신/광열': ['주거/관리비', '통신비', '전기/가스/수도'],
-    '교통/차량': ['대중교통', '자차/유지', '주유', '택시'],
-    '문화/여가': ['OTT/구독', '여행', '문화생활', '게임'],
-    '쇼핑/생활': ['온라인', '오프라인', '생활용품'],
-    '의료/건강': ['병원', '약국', '건강식품'],
-    '교육': ['학원/과외', '서적', '온라인강의'],
-    '비소비지출/금융': ['이자/세금', '보험', '경조사', '기부'],
-    '인맥': ['경조사', '선물', '모임'],
-    '기타': ['기타', '미분류'],
-};
+// ✅ Legacy CATEGORIES removed. Using constants/categories.ts
+
 
 // ✅ 날짜 유효성 체크 헬퍼 함수
 const isValidDate = (dateStr: string | undefined | null): boolean => {
@@ -58,7 +48,7 @@ const normalizeDateInput = (value: string): string => {
     return match[1];
 };
 
-const CATEGORY_LIST = Object.keys(CATEGORIES);
+
 
 // ✅ 관계 선택 상수 (확장)
 const RELATIONS = ['직계가족', '형제자매', '가족', '절친', '친한 친구', '직장 동료', '대학 동기', '지인', '거래처'];
@@ -134,8 +124,9 @@ export default function SmartScanResultScreen() {
 
     // ✅ 카테고리 선택 모달 상태
     const [categoryModalVisible, setCategoryModalVisible] = useState(false);
-    const [categoryModalType, setCategoryModalType] = useState<'category' | 'subCategory'>('category');
+    const [categoryModalType, setCategoryModalType] = useState<'group' | 'category' | 'subCategory'>('category');
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+    const [selectedGroup, setSelectedGroup] = useState<CategoryGroupType | null>(null);
 
     // ✅ 날짜 피커 모달 상태
     const [datePickerVisible, setDatePickerVisible] = useState(false);
@@ -265,9 +256,10 @@ export default function SmartScanResultScreen() {
     };
 
     // ✅ 카테고리 선택 모달 열기
-    const openCategoryModal = (type: 'category' | 'subCategory', currentCategory?: string) => {
+    const openCategoryModal = (type: 'group' | 'category' | 'subCategory', currentCategory?: string, currentGroup?: CategoryGroupType) => {
         setCategoryModalType(type);
         setSelectedCategory(currentCategory || null);
+        setSelectedGroup(currentGroup || null);
         setCategoryModalVisible(true);
     };
 
@@ -331,17 +323,39 @@ export default function SmartScanResultScreen() {
         setDatePickerTargetIndex(null);
     };
 
-    // ✅ 카테고리 선택 핸들러 (대분류/소분류 독립 선택)
+    // ✅ 카테고리 선택 핸들러 (그룹/대분류/소분류)
     const handleCategorySelect = (value: string) => {
-        if (categoryModalType === 'category') {
-            // 편집 모드인지 확인
+        if (categoryModalType === 'group') {
+            // 그룹 변경 -> 카테고리, 서브카테고리 초기화
+            if (editingIndex !== null) {
+                updateEditingItem('categoryGroup', value);
+                updateEditingItem('category', '');
+                updateEditingItem('subCategory', '');
+            } else {
+                handleUpdateData('categoryGroup', value);
+                handleUpdateData('category', '');
+                handleUpdateData('subCategory', '');
+            }
+            setSelectedGroup(value as CategoryGroupType);
+            setSelectedCategory(null);
+
+        } else if (categoryModalType === 'category') {
+            // 카테고리 변경 -> 서브카테고리 초기화
             if (editingIndex !== null) {
                 updateEditingItem('category', value);
+                updateEditingItem('subCategory', '');
+                // 그룹이 없으면 자동 설정
+                const group = CATEGORY_MAP[value]?.group;
+                if (group) updateEditingItem('categoryGroup', group);
             } else {
                 handleUpdateData('category', value);
+                handleUpdateData('subCategory', '');
+                const group = CATEGORY_MAP[value]?.group;
+                if (group) handleUpdateData('categoryGroup', group);
             }
             setSelectedCategory(value);
         } else {
+            // 소분류 변경
             if (editingIndex !== null) {
                 updateEditingItem('subCategory', value);
             } else {
@@ -746,12 +760,26 @@ export default function SmartScanResultScreen() {
                             </TouchableOpacity>
                         </View>
 
-                        {/* 카테고리 선택 (터치) */}
+                        {/* 카테고리 그룹 선택 */}
                         <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>카테고리 (대분류)</Text>
+                            <Text style={styles.infoLabel}>카테고리 그룹</Text>
                             <TouchableOpacity
                                 style={styles.categorySelect}
-                                onPress={() => openCategoryModal('category', (data as any).category)}
+                                onPress={() => openCategoryModal('group', undefined, (data as any).categoryGroup)}
+                            >
+                                <Text style={styles.categorySelectText}>
+                                    {CATEGORY_GROUPS.find(g => g.value === (data as any).categoryGroup)?.label || '선택하세요'}
+                                </Text>
+                                <Ionicons name="chevron-down" size={16} color={Colors.subText} />
+                            </TouchableOpacity>
+                        </View>
+
+                        {/* 카테고리 선택 */}
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>카테고리</Text>
+                            <TouchableOpacity
+                                style={styles.categorySelect}
+                                onPress={() => openCategoryModal('category', (data as any).category, (data as any).categoryGroup)}
                             >
                                 <Text style={styles.categorySelectText}>
                                     {(data as any).category || '선택하세요'}
@@ -760,12 +788,12 @@ export default function SmartScanResultScreen() {
                             </TouchableOpacity>
                         </View>
 
-                        {/* 소분류 선택 (터치) */}
+                        {/* 소분류 선택 */}
                         <View style={styles.infoRow}>
                             <Text style={styles.infoLabel}>상세 분류 (소분류)</Text>
                             <TouchableOpacity
                                 style={styles.categorySelect}
-                                onPress={() => openCategoryModal('subCategory', (data as any).category || '기타')}
+                                onPress={() => openCategoryModal('subCategory', (data as any).category)}
                             >
                                 <Text style={styles.categorySelectText}>
                                     {(data as any).subCategory || '선택하세요'}
@@ -816,12 +844,26 @@ export default function SmartScanResultScreen() {
                             </TouchableOpacity>
                         </View>
 
-                        {/* 카테고리 선택 (터치) */}
+                        {/* 카테고리 그룹 선택 */}
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>카테고리 그룹</Text>
+                            <TouchableOpacity
+                                style={styles.categorySelect}
+                                onPress={() => openCategoryModal('group', undefined, (data as any).categoryGroup)}
+                            >
+                                <Text style={styles.categorySelectText}>
+                                    {CATEGORY_GROUPS.find(g => g.value === (data as any).categoryGroup)?.label || '선택하세요'}
+                                </Text>
+                                <Ionicons name="chevron-down" size={16} color={Colors.subText} />
+                            </TouchableOpacity>
+                        </View>
+
+                        {/* 카테고리 선택 */}
                         <View style={styles.infoRow}>
                             <Text style={styles.infoLabel}>카테고리 (대분류)</Text>
                             <TouchableOpacity
                                 style={styles.categorySelect}
-                                onPress={() => openCategoryModal('category', (data as any).category)}
+                                onPress={() => openCategoryModal('category', (data as any).category, (data as any).categoryGroup)}
                             >
                                 <Text style={styles.categorySelectText}>
                                     {(data as any).category || '선택하세요'}
@@ -830,7 +872,7 @@ export default function SmartScanResultScreen() {
                             </TouchableOpacity>
                         </View>
 
-                        {/* 소분류 선택 (터치) */}
+                        {/* 소분류 선택 */}
                         <View style={styles.infoRow}>
                             <Text style={styles.infoLabel}>상세 분류 (소분류)</Text>
                             <TouchableOpacity
@@ -1357,26 +1399,40 @@ export default function SmartScanResultScreen() {
                             isCurrency
                         />
 
-                        {/* 카테고리 선택 (터치) */}
+                        {/* 카테고리 그룹 선택 */}
                         <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>카테고리 (대분류)</Text>
+                            <Text style={styles.infoLabel}>카테고리 그룹</Text>
                             <TouchableOpacity
                                 style={styles.categorySelect}
-                                onPress={() => openCategoryModal('category', bank.category)}
+                                onPress={() => openCategoryModal('group', undefined, (data as any).categoryGroup)}
                             >
                                 <Text style={styles.categorySelectText}>
-                                    {bank.category || (bank.isUtility ? '비소비지출/금융' : '인맥')}
+                                    {CATEGORY_GROUPS.find(g => g.value === (data as any).categoryGroup)?.label || '선택하세요'}
                                 </Text>
                                 <Ionicons name="chevron-down" size={16} color={Colors.subText} />
                             </TouchableOpacity>
                         </View>
 
-                        {/* 소분류 선택 (터치) */}
+                        {/* 카테고리 선택 */}
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>카테고리</Text>
+                            <TouchableOpacity
+                                style={styles.categorySelect}
+                                onPress={() => openCategoryModal('category', (data as any).category || (bank.isUtility ? '공과금' : '인맥'), (data as any).categoryGroup)}
+                            >
+                                <Text style={styles.categorySelectText}>
+                                    {bank.category || (bank.isUtility ? '공과금' : '인맥')}
+                                </Text>
+                                <Ionicons name="chevron-down" size={16} color={Colors.subText} />
+                            </TouchableOpacity>
+                        </View>
+
+                        {/* 소분류 선택 */}
                         <View style={styles.infoRow}>
                             <Text style={styles.infoLabel}>상세 분류 (소분류)</Text>
                             <TouchableOpacity
                                 style={styles.categorySelect}
-                                onPress={() => openCategoryModal('subCategory', bank.category || (bank.isUtility ? '비소비지출/금융' : '인맥'))}
+                                onPress={() => openCategoryModal('subCategory', bank.category || (bank.isUtility ? '공과금' : '인맥'))}
                             >
                                 <Text style={styles.categorySelectText}>
                                     {bank.subCategory || '선택하세요'}
@@ -1664,27 +1720,38 @@ export default function SmartScanResultScreen() {
                 >
                     <View style={styles.categoryModalContent} onStartShouldSetResponder={() => true}>
                         <Text style={styles.categoryModalTitle}>
-                            {categoryModalType === 'category' ? '카테고리 선택' : '상세 분류 선택'}
+                            {categoryModalType === 'group' ? '그룹 선택' :
+                                categoryModalType === 'category' ? '카테고리 선택' : '상세 분류 선택'}
                         </Text>
                         <ScrollView>
                             <View style={styles.categoryChipContainer}>
-                                {(categoryModalType === 'category'
-                                    ? CATEGORY_LIST
-                                    : (CATEGORIES[selectedCategory || (data as any)?.category || '인맥'] || ['경조사', '선물', '모임'])
-                                ).map((item) => {
-                                    const currentValue = categoryModalType === 'category'
-                                        ? (data as any)?.category
-                                        : (data as any)?.subCategory;
-                                    const isSelected = item === currentValue;
+                                {(() => {
+                                    if (categoryModalType === 'group') {
+                                        return CATEGORY_GROUPS.map(g => ({ label: g.label, value: g.value }));
+                                    } else if (categoryModalType === 'category') {
+                                        return getReviewCategoryList(selectedGroup || undefined).map(c => ({ label: c.category, value: c.category }));
+                                    } else {
+                                        // SubCategory
+                                        const catSpec = CATEGORY_MAP[selectedCategory || '기타'];
+                                        const subs = catSpec ? catSpec.subCategories : ['기타'];
+                                        return subs.map(s => ({ label: s, value: s }));
+                                    }
+                                })().map((item) => {
+                                    const currentValue = categoryModalType === 'group'
+                                        ? (data as any)?.categoryGroup
+                                        : categoryModalType === 'category'
+                                            ? (data as any)?.category
+                                            : (data as any)?.subCategory;
+                                    const isSelected = item.value === currentValue;
 
                                     return (
                                         <TouchableOpacity
-                                            key={item}
+                                            key={item.value}
                                             style={[styles.categoryChip, isSelected && styles.categoryChipSelected]}
-                                            onPress={() => handleCategorySelect(item)}
+                                            onPress={() => handleCategorySelect(item.value)}
                                         >
                                             <Text style={[styles.categoryChipText, isSelected && styles.categoryChipTextSelected]}>
-                                                {item}
+                                                {item.label}
                                             </Text>
                                         </TouchableOpacity>
                                     );
