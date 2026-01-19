@@ -269,17 +269,46 @@ function findAnchorsInBlock(block: Block, o: Required<Options>): Anchor[] {
     const anchors: Anchor[] = [];
 
     const ymd = /\b(20\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})\b/g;
+    const yyMd = /\b(\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})\b/g; // New: 26/01/14 support
     const ymdKorean = /\b(20\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일\b/g;
     const md = /\b(\d{1,2})[\/.](\d{1,2})\b/g;
     const mdKorean = /\b(\d{1,2})\s*월\s*(\d{1,2})\s*일\b/g;
 
     block.lines.forEach((line, lineIndex) => {
         const blocked: Array<[number, number]> = [];
+        const isBlocked = (idx: number) => blocked.some(([s, e]) => idx >= s && idx < e);
 
+        // 1. YYYY-MM-DD
         for (const m of line.matchAll(ymd)) {
             const year = toInt(m[1]);
             const month = toInt(m[2]);
             const day = toInt(m[3]);
+            const d = safeDate(year, month, day);
+            if (!d) continue;
+
+            anchors.push({
+                date: stripTime(d),
+                lineIndex,
+                colIndex: m.index ?? 0,
+                raw: m[0]
+            });
+
+            if (m.index !== undefined) {
+                blocked.push([m.index, m.index + m[0].length]);
+            }
+        }
+
+        // 2. YY-MM-DD (New)
+        for (const m of line.matchAll(yyMd)) {
+            if (m.index !== undefined && isBlocked(m.index)) continue;
+
+            let year = toInt(m[1]);
+            const month = toInt(m[2]);
+            const day = toInt(m[3]);
+
+            // Assume 20xx context for receipt dates
+            year += 2000;
+
             const d = safeDate(year, month, day);
             if (!d) continue;
 
@@ -313,8 +342,6 @@ function findAnchorsInBlock(block: Block, o: Required<Options>): Anchor[] {
                 blocked.push([m.index, m.index + m[0].length]);
             }
         }
-
-        const isBlocked = (idx: number) => blocked.some(([s, e]) => idx >= s && idx < e);
 
         for (const m of line.matchAll(md)) {
             if (m.index !== undefined && isBlocked(m.index)) continue;
