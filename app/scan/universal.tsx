@@ -55,6 +55,7 @@ export default function UniversalScannerScreen() {
     const { colors } = useTheme();
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
     const [url, setUrl] = useState('');
+    const [inputHeight, setInputHeight] = useState(56);
     const [settingsVisible, setSettingsVisible] = useState(false);
     const [preprocessEnabled, setPreprocessEnabledState] = useState(isPreprocessEnabled());
 
@@ -250,10 +251,19 @@ export default function UniversalScannerScreen() {
 
                 {/* URL Input */}
                 <View style={styles.urlSection}>
-                    <View style={[styles.inputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                        <Ionicons name="link-outline" size={20} color={colors.subText} style={{ marginRight: 8 }} />
+                    <View
+                        style={[
+                            styles.inputContainer,
+                            {
+                                backgroundColor: colors.card,
+                                borderColor: colors.border,
+                                height: inputHeight,
+                            },
+                        ]}
+                    >
+                        <Ionicons name="link-outline" size={20} color={colors.subText} style={{ marginRight: 8, marginTop: 4 }} />
                         <TextInput
-                            style={[styles.input, { color: colors.text }]}
+                            style={[styles.input, { color: colors.text, height: Math.max(36, inputHeight - 24) }]}
                             placeholder="URL 또는 문자 내용 붙여넣기"
                             placeholderTextColor={colors.subText}
                             value={url}
@@ -261,6 +271,13 @@ export default function UniversalScannerScreen() {
                             autoCapitalize="none"
                             multiline={true}
                             numberOfLines={3}
+                            onContentSizeChange={(event) => {
+                                const height = event.nativeEvent.contentSize.height;
+                                // 패딩(24)을 고려하여 최소 56, 최대 150
+                                const nextHeight = Math.min(Math.max(56, height + 24), 150);
+                                setInputHeight(nextHeight);
+                            }}
+                            textAlignVertical="top"
                             accessibilityLabel="URL 또는 텍스트 입력창"
                         />
                     </View>
@@ -347,14 +364,16 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         lineHeight: 24,
     },
-    urlSection: { flexDirection: 'row', marginBottom: 24, gap: 12 },
+    urlSection: { flexDirection: 'row', marginBottom: 24, gap: 12, alignItems: 'flex-start' },
     inputContainer: {
         flex: 1,
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         borderRadius: 16,
         paddingHorizontal: 16,
-        height: 56,
+        paddingVertical: 12,
+        minHeight: 56,
+        maxHeight: 150,
         borderWidth: 1,
     },
     input: {

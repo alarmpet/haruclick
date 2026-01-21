@@ -4,6 +4,7 @@ import { Colors } from '../constants/Colors';
 import { useRouter } from 'expo-router';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, fetchUserStats, getTodayEvents, getUpcomingEvents, EventRecord } from '../services/supabase';
+import { getEventEmoji } from '../services/EmojiService';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -214,15 +215,45 @@ export default function Home() {
                     <View style={styles.timelineSection}>
                         <Text style={styles.timelineTitle}>오늘의 기록</Text>
                         {todayEvents.slice(0, 3).map((event) => (
-                            <View key={event.id} style={styles.timelineItem}>
-                                <View style={[styles.timelineDot, event.isReceived ? styles.dotIn : styles.dotOut]} />
-                                <Text style={styles.timelineName} numberOfLines={1}>{event.name || '내역'}</Text>
+                            <TouchableOpacity
+                                key={event.id}
+                                style={[
+                                    styles.timelineItem,
+                                    event.source === 'events' && styles.timelineItemHighlight
+                                ]}
+                                onPress={() => router.push({ pathname: '/calendar', params: { date: event.date?.split('T')[0] } })}
+                                activeOpacity={0.7}
+                            >
+                                {event.source === 'events' ? (
+                                    <View style={styles.timelineIconContainer}>
+                                        <Text style={{ fontSize: 12 }}>
+                                            {getEventEmoji(event)}
+                                        </Text>
+                                    </View>
+                                ) : (
+                                    <View style={[styles.timelineDot, event.isReceived ? styles.dotIn : styles.dotOut]} />
+                                )}
+                                <Text
+                                    style={[
+                                        styles.timelineName,
+                                        event.source === 'events' && styles.timelineNameHighlight
+                                    ]}
+                                    numberOfLines={1}
+                                >
+                                    {event.name || '내역'}
+                                </Text>
                                 {event.amount && event.amount > 0 ? (
                                     <Text style={[styles.timelineAmount, event.isReceived ? styles.amountIn : styles.amountOut]}>
                                         {event.isReceived ? '+' : '-'}{event.amount.toLocaleString()}
                                     </Text>
-                                ) : null}
-                            </View>
+                                ) : (
+                                    event.source === 'events' && (
+                                        <Text style={styles.timelineTime}>
+                                            {event.startTime ? event.startTime.substring(0, 5) : '하루 종일'}
+                                        </Text>
+                                    )
+                                )}
+                            </TouchableOpacity>
                         ))}
                     </View>
                 )}
@@ -264,7 +295,7 @@ export default function Home() {
                                     activeOpacity={0.7}
                                 >
                                     <View style={styles.upcomingLeft}>
-                                        <Text style={styles.upcomingType}>{event.type === 'wedding' ? '💒' : event.type === 'funeral' ? '🖤' : '🎉'}</Text>
+                                        <Text style={styles.upcomingType}>{getEventEmoji(event)}</Text>
                                         <View>
                                             <Text style={styles.upcomingName}>{event.name || '일정'}</Text>
                                             <Text style={styles.upcomingDate}>{event.date?.split('T')[0]}{event.relation ? ` · ${event.relation}` : ''}</Text>
@@ -440,6 +471,32 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         paddingVertical: 10,
+    },
+    timelineItemHighlight: {
+        backgroundColor: 'rgba(255, 126, 54, 0.1)', // Colors.orange w/ opacity
+        marginHorizontal: -12,
+        paddingHorizontal: 12,
+        borderRadius: 12,
+        paddingVertical: 12,
+        marginBottom: 4,
+    },
+    timelineIconContainer: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 10,
+    },
+    timelineNameHighlight: {
+        fontFamily: 'Pretendard-Bold',
+        color: Colors.orange,
+    },
+    timelineTime: {
+        fontFamily: 'Pretendard-Medium',
+        fontSize: 13,
+        color: Colors.subText,
     },
     timelineDot: {
         width: 8,

@@ -24,7 +24,8 @@ export async function getUpcomingEvents(limit = 2): Promise<EventRecord[]> {
     }
 
     try {
-        const today = new Date().toISOString().split('T')[0];
+        // KST 기준 오늘 날짜 계산 (UTC+9)
+        const today = new Date(new Date().getTime() + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
 
         // 0. Auth Check
         const { data: { user } } = await supabase.auth.getUser();
@@ -32,11 +33,11 @@ export async function getUpcomingEvents(limit = 2): Promise<EventRecord[]> {
             return [];
         }
 
-        // 다가오는 일정 (오늘 포함)
+        // 다가오는 일정 (오늘 제외, 내일부터)
         const { data, error } = await supabase
             .from('events')
             .select('*')
-            .gte('event_date', today)
+            .gt('event_date', today)
             .order('event_date', { ascending: true })
             .limit(limit);
 

@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet, TouchableOpacity, Animated, Dimensions, Alert, Modal, TextInput, ScrollView } from 'react-native';
-import { Stack, useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { Stack, useRouter, useFocusEffect, useLocalSearchParams, useNavigation } from 'expo-router';
+import { DrawerActions } from '@react-navigation/native';
 import { Calendar, CalendarList, DateData, LocaleConfig } from 'react-native-calendars';
 import { Colors } from '../../constants/Colors';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -20,17 +21,17 @@ const { width } = Dimensions.get('window');
 
 // 카테고리별 색상
 const CATEGORY_COLORS: Record<string, string> = {
-    ceremony: '#FF6B6B',
-    todo: '#4A90D9',
-    schedule: '#4ECDC4',
-    wedding: '#FF6B6B',
-    funeral: '#9E9E9E',
-    birthday: '#FFD93D',
-    other: '#4ECDC4',
-    expense: '#FF4D4D', // 지출 (빨강)
-    income: '#4D79FF',  // 수입 (파랑)
-    transfer: '#FF9F43', // 이체 (오렌지)
-    receipt: '#FF4D4D', // 영수증 (빨강)
+    ceremony: '#8B5CF6',   // Purple (Distinct from expense red)
+    todo: '#10B981',       // Emerald (Distinct from income blue)
+    schedule: '#FBBF24',   // Amber (High visibility)
+    wedding: '#D946EF',    // Fuchsia
+    funeral: '#64748B',    // Slate
+    birthday: '#EC4899',   // Pink
+    other: '#6B7280',      // Gray
+    expense: '#EF4444',    // Red (Financial Standard)
+    income: '#3B82F6',     // Blue (Financial Standard)
+    transfer: '#F97316',   // Orange (Financial Standard)
+    receipt: '#EF4444',    // Red (Same as expense)
 };
 
 // Configure Korean Locale
@@ -45,6 +46,7 @@ LocaleConfig.defaultLocale = 'kr';
 
 export default function CalendarScreen() {
     const router = useRouter();
+    const navigation = useNavigation();
     const { colors } = useTheme();
     const [selectedDate, setSelectedDate] = useState('');
     const [detailModalVisible, setDetailModalVisible] = useState(false);
@@ -457,29 +459,31 @@ export default function CalendarScreen() {
                 onPress={() => handleDayPress(date)}
                 activeOpacity={0.7}
             >
-                <View style={[
-                    styles.dayNumber,
-                    isToday && styles.todayNumber,
-                    isSelected && styles.selectedNumber,
-                ]}>
-                    <Text style={[
-                        styles.dayText,
-                        isToday && styles.todayText,
-                        isSelected && styles.selectedText,
-                        isDisabled && styles.disabledText,
-                        !isToday && !isSelected && !isDisabled && isRedDay && styles.holidayNumberText // 빨간날
+                {/* 날짜 & 음력 컨테이너 (좌상단 정렬) */}
+                <View style={styles.dayNumberContainer}>
+                    <View style={[
+                        styles.dayNumber,
+                        isToday && styles.todayNumber,
+                        isSelected && styles.selectedNumber,
                     ]}>
-                        {date.day}
+                        <Text style={[
+                            styles.dayText,
+                            isToday && styles.todayText,
+                            isSelected && styles.selectedText,
+                            isDisabled && styles.disabledText,
+                            !isToday && !isSelected && !isDisabled && isRedDay && styles.holidayNumberText
+                        ]}>
+                            {date.day}
+                        </Text>
+                    </View>
+
+                    {/* 음력/명절 표시 */}
+                    <Text style={[lunarInfo.isHoliday ? styles.holidayText : styles.lunarText, { marginLeft: 4 }]}>
+                        {lunarInfo.holidayName || lunarInfo.lunarDate}
                     </Text>
                 </View>
 
-                {/* 음력/명절 표시 */}
-                <Text style={lunarInfo.isHoliday ? styles.holidayText : styles.lunarText}>
-                    {lunarInfo.holidayName || lunarInfo.lunarDate}
-                </Text>
-
                 {isLedgerOnlyMode ? (
-                    // ✅ 가계부 모드: 금액 표시
                     <View style={{ marginTop: 2, alignItems: 'center', width: '100%' }}>
                         {dailyIncome > 0 && (
                             <Text style={{ fontSize: 9, color: '#0064FF', fontFamily: 'Pretendard-Bold' }} numberOfLines={1}>
@@ -493,17 +497,26 @@ export default function CalendarScreen() {
                         )}
                     </View>
                 ) : (
-                    // ✅ 일반 모드: 점(Dot) 태그 표시
                     <View style={styles.eventTags}>
-                        {dayEvents.slice(0, 5).map((event: any, idx: number) => (
-                            <View key={idx} style={[styles.eventTag, { backgroundColor: event.color }]}>
-                                <Text style={styles.eventTagText} numberOfLines={1}>
-                                    {event.name}
-                                </Text>
-                            </View>
-                        ))}
+                        {dayEvents.slice(0, 5).map((event: any, idx: number) => {
+                            // 색상 처리: 투명도 적용된 배경 + 진한 라인
+                            return (
+                                <View key={idx} style={[
+                                    styles.eventTag,
+                                    {
+                                        backgroundColor: event.color + '33', // 20% opacity (hex approximation)
+                                        borderLeftColor: event.color,
+                                        borderLeftWidth: 3
+                                    }
+                                ]}>
+                                    <Text style={[styles.eventTagText, { color: '#ddd' }]} numberOfLines={1}>
+                                        {event.name}
+                                    </Text>
+                                </View>
+                            );
+                        })}
                         {dayEvents.length > 5 && (
-                            <Text style={styles.moreText}>+{dayEvents.length - 5}</Text>
+                            <Text style={styles.moreText}>+{dayEvents.length - 5} more</Text>
                         )}
                     </View>
                 )}
@@ -690,22 +703,23 @@ export default function CalendarScreen() {
         <View style={styles.container}>
             <Stack.Screen options={{ headerShown: false }} />
 
-            {/* 헤더 */}
+            {/* 커스텀 헤더 */}
             <View style={styles.header}>
-                <TouchableOpacity style={styles.headerLeft} onPress={() => Alert.alert('메뉴', '준비 중인 기능입니다.', [{ text: '확인' }])}>
-                    <Ionicons name="menu" size={24} color="#fff" />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.headerCenter} onPress={() => setMonthPickerVisible(true)}>
-                    <Text style={styles.monthText}>
-                        {viewMode === 'day'
-                            ? `${currentDate.split('-')[1]}월 ${currentDate.split('-')[2]}일`
-                            : viewMode === 'week'
-                                ? `${currentDate.split('-')[1]}월`
-                                : `${currentMonth}월`
-                        }
-                    </Text>
-                    <Ionicons name="chevron-down" size={16} color="#fff" />
-                </TouchableOpacity>
+                <View style={styles.headerLeft}>
+                    <TouchableOpacity onPress={() => navigation.dispatch(DrawerActions.toggleDrawer())}>
+                        <Ionicons name="menu" size={24} color="#fff" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        onPress={() => setMonthPickerVisible(true)}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                    >
+                        <Text style={styles.monthText}>
+                            {currentDate.split('-')[1]}월
+                        </Text>
+                        <Ionicons name="chevron-down" size={16} color="#fff" />
+                    </TouchableOpacity>
+                </View>
+
                 <View style={styles.headerRight}>
                     <TouchableOpacity style={styles.headerIcon} onPress={() => { setSearchQuery(''); setSearchResults([]); setSearchModalVisible(true); }}>
                         <Ionicons name="search" size={22} color="#fff" />
@@ -720,22 +734,23 @@ export default function CalendarScreen() {
             </View>
 
             {/* 필터 (모든 뷰에서 보일지, 월별만 보일지 선택 필요하지만 일단 유지) */}
+            {/* 필터 (Dot + Text 스타일) */}
             <View style={styles.filterContainer}>
-                <TouchableOpacity style={[styles.filterChip, filters.ceremony && { backgroundColor: CATEGORY_COLORS.ceremony }]} onPress={() => toggleFilter('ceremony')}>
-                    <Ionicons name="heart" size={14} color={filters.ceremony ? '#fff' : CATEGORY_COLORS.ceremony} />
-                    <Text style={[styles.filterText, filters.ceremony && { color: '#fff' }]}>경조사</Text>
+                <TouchableOpacity style={styles.filterChip} onPress={() => toggleFilter('ceremony')}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: filters.ceremony ? CATEGORY_COLORS.ceremony : '#555' }} />
+                    <Text style={[styles.filterText, !filters.ceremony && { color: '#555' }]}>경조사</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.filterChip, filters.todo && { backgroundColor: CATEGORY_COLORS.todo }]} onPress={() => toggleFilter('todo')}>
-                    <Ionicons name="checkbox" size={14} color={filters.todo ? '#fff' : CATEGORY_COLORS.todo} />
-                    <Text style={[styles.filterText, filters.todo && { color: '#fff' }]}>할일</Text>
+                <TouchableOpacity style={styles.filterChip} onPress={() => toggleFilter('todo')}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: filters.todo ? CATEGORY_COLORS.todo : '#555' }} />
+                    <Text style={[styles.filterText, !filters.todo && { color: '#555' }]}>할일</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.filterChip, filters.schedule && { backgroundColor: CATEGORY_COLORS.schedule }]} onPress={() => toggleFilter('schedule')}>
-                    <Ionicons name="calendar" size={14} color={filters.schedule ? '#fff' : CATEGORY_COLORS.schedule} />
-                    <Text style={[styles.filterText, filters.schedule && { color: '#fff' }]}>일정</Text>
+                <TouchableOpacity style={styles.filterChip} onPress={() => toggleFilter('schedule')}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: filters.schedule ? CATEGORY_COLORS.schedule : '#555' }} />
+                    <Text style={[styles.filterText, !filters.schedule && { color: '#555' }]}>일정</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.filterChip, filters.expense && { backgroundColor: CATEGORY_COLORS.expense }]} onPress={() => toggleFilter('expense')}>
-                    <Ionicons name="receipt" size={14} color={filters.expense ? '#fff' : CATEGORY_COLORS.expense} />
-                    <Text style={[styles.filterText, filters.expense && { color: '#fff' }]}>가계부</Text>
+                <TouchableOpacity style={styles.filterChip} onPress={() => toggleFilter('expense')}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: filters.expense ? CATEGORY_COLORS.expense : '#555' }} />
+                    <Text style={[styles.filterText, !filters.expense && { color: '#555' }]}>가계부</Text>
                 </TouchableOpacity>
             </View>
 
@@ -1116,13 +1131,12 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.navy,
     },
     headerLeft: {
-        padding: 8,
-    },
-    headerCenter: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
+        padding: 8,
+        gap: 8,
     },
+
     monthText: {
         fontFamily: 'Pretendard-Bold',
         fontSize: 20,
@@ -1145,12 +1159,9 @@ const styles = StyleSheet.create({
     filterChip: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 12,
+        paddingHorizontal: 8,
         paddingVertical: 6,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.3)',
-        gap: 4,
+        gap: 6,
     },
     filterText: {
         fontFamily: 'Pretendard-Medium',
@@ -1177,18 +1188,24 @@ const styles = StyleSheet.create({
         height: 120,
         paddingVertical: 4,
         paddingHorizontal: 2,
+        paddingLeft: 4,
+        alignItems: 'flex-start', // 좌측 정렬
         borderRightWidth: 0.5,
         borderRightColor: 'rgba(255,255,255,0.12)',
         borderBottomWidth: 0.5,
         borderBottomColor: 'rgba(255,255,255,0.12)',
     },
+    dayNumberContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 2,
+    },
     dayNumber: {
-        width: 24,
-        height: 24,
-        borderRadius: 12,
         justifyContent: 'center',
         alignItems: 'center',
-        alignSelf: 'center',
+        paddingHorizontal: 4,
+        paddingVertical: 2,
+        borderRadius: 4,
     },
     todayNumber: {
         borderWidth: 1,
@@ -1232,10 +1249,10 @@ const styles = StyleSheet.create({
         color: '#fff',
     },
     moreText: {
-        fontFamily: 'Pretendard-Medium',
-        fontSize: 9,
+        fontSize: 10,
         color: '#888',
-        textAlign: 'center',
+        marginLeft: 2,
+        marginTop: 1,
     },
     fabContainer: {
         position: 'absolute',

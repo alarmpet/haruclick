@@ -94,7 +94,7 @@ export function scoreOcrText(text: string): number {
 
     // 3. Keywords (Max 30)
     // Transaction or Event keywords
-    if (/(승인|결제|입금|출금|잔액|유효기간|주문|합계|예약|일정|장소|문의|초대|결혼|부고|돌잔치)/.test(trimmed)) {
+    if (/(승인|결제|입금|출금|잔액|유효기간|주문|합계|예약|일정|장소|문의|초대|결혼|부고|돌잔치|공급가액|부가세|카드)/.test(trimmed)) {
         score += 30;
     }
 
@@ -120,8 +120,9 @@ export function correctOcrTypos(text: string): string {
         const hasDigit = /\d/.test(token);
         const hasSuspicious = /[SOIBZl]/.test(token);
 
+        // Strict number context fixes
         if (hasDigit && hasSuspicious) {
-            return token
+            token = token
                 .replace(/[O]/g, '0')
                 .replace(/[o]/g, '0')
                 .replace(/[Il]/g, '1')
@@ -130,8 +131,9 @@ export function correctOcrTypos(text: string): string {
                 .replace(/Z/g, '2');
         }
 
+        // Potential number start clusters e.g. "S5000" -> "55000"
         if (/^[SOIBZ]\d+/.test(token)) {
-            return token
+            token = token
                 .replace(/^S/, '5')
                 .replace(/^O/, '0')
                 .replace(/^I/, '1')
@@ -140,7 +142,8 @@ export function correctOcrTypos(text: string): string {
         }
 
         // Dangling comma fix (e.g., 12,50 -> 12,500)
-        if (/^\d{1,3},\d{2}$/.test(token)) {
+        // Only if it looks like a currency amount
+        if (/^\d{1,3}(,\d{3})*,\d{2}$/.test(token)) {
             return token + '0';
         }
 
@@ -523,6 +526,183 @@ function daysBetween(a: Date, b: Date): number {
 }
 
 // ==========================================
+// 4.5 Advanced Preprocessing (Deskew & ROI)
+// ==========================================
+
+function calculateDeskewAngle(result: TextRecognitionResult): number {
+    const lines = result.blocks.flatMap(b => b.lines);
+    const validAngles: number[] = [];
+
+    for (const line of lines) {
+        // Skip short noise lines
+        if (line.text.length < 5) continue;
+        const pts = line.cornerPoints;
+        if (!pts || pts.length < 2) continue;
+
+        // Calculate angle of the line
+        // pts[0] = top-left, pts[1] = top-right
+        const dx = pts[1].x - pts[0].x;
+        const dy = pts[1].y - pts[0].y;
+
+        // angle in degrees
+        const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+
+        // We assume receipt is roughly vertical, so angle shouldn't be too extreme
+        // e.g. within -20 to 20 degrees is typical fixable skew
+        if (Math.abs(angle) < 45) {
+            validAngles.push(angle);
+        }
+    }
+
+    if (validAngles.length === 0) return 0;
+
+    // Median filter
+    validAngles.sort((a, b) => a - b);
+    const mid = Math.floor(validAngles.length / 2);
+    const medianAngle = validAngles[mid];
+
+    // Ignore micro-rotations
+    if (Math.abs(medianAngle) < 1.0) return 0;
+
+    return medianAngle;
+}
+
+function calculateRoi(result: TextRecognitionResult, imgWidth: number, imgHeight: number): { originX: number, originY: number, width: number, height: number } | null {
+    if (imgWidth <= 0 || imgHeight <= 0) return null;
+
+    let minX = imgWidth, minY = imgHeight, maxX = 0, maxY = 0;
+    let hasContent = false;
+
+    // Use blocks to determine bound
+    for (const block of result.blocks) {
+        const f = block.frame;
+        if (!f) continue;
+
+        // Skip huge blocks that might be full page noise
+        if (f.width > imgWidth * 0.95 && f.height > imgHeight * 0.95) continue;
+
+        hasContent = true;
+        if (f.left < minX) minX = f.left;
+        if (f.top < minY) minY = f.top;
+        if (f.left + f.width > maxX) maxX = f.left + f.width;
+        if (f.top + f.height > maxY) maxY = f.top + f.height;
+    }
+
+    if (!hasContent) return null;
+
+    // Apply Padding (5%)
+    const paddingX = imgWidth * 0.05;
+    const paddingY = imgHeight * 0.05;
+
+    minX = Math.max(0, minX - paddingX);
+    minY = Math.max(0, minY - paddingY);
+    maxX = Math.min(imgWidth, maxX + paddingX);
+    maxY = Math.min(imgHeight, maxY + paddingY);
+
+    const roiWidth = maxX - minX;
+    const roiHeight = maxY - minY;
+
+    // Check if ROI is significantly smaller (e.g. < 70% area)
+    const roiArea = roiWidth * roiHeight;
+    const totalArea = imgWidth * imgHeight;
+
+    if (roiArea > totalArea * 0.70) return null; // No meaningful crop
+
+    return { originX: minX, originY: minY, width: roiWidth, height: roiHeight };
+}
+
+async function performAdvancedPreprocessing(uri: string): Promise<{ uri: string; textResult: TextRecognitionResult; text: string; score: number }> {
+    // 1. Initial Fast OCR
+    const initialResult = await TextRecognition.recognize(uri, TextRecognitionScript.KOREAN);
+
+    // DEFENSIVE CHECK: If ML Kit returns nothing, stop here
+    if (!initialResult.blocks || initialResult.blocks.length === 0) {
+        console.warn('[OCR] ML Kit returned no blocks, skipping advanced processing');
+        return { uri, textResult: initialResult, text: '', score: 0 };
+    }
+
+    const initialText = filterByConfidence(initialResult, 0.4);
+    const initialClean = correctOcrTypos(initialText);
+    const initialScore = scoreOcrText(initialClean);
+
+    // If score is already great, return immediately
+    if (initialScore >= 80) {
+        console.log('[OCR] Initial Score is sufficient (>=80). No advanced processing.');
+        return { uri, textResult: initialResult, text: initialClean, score: initialScore };
+    }
+
+    // 2. Analyze for Deskew & ROI
+    let width = 0, height = 0;
+    try {
+        const size = await new Promise<{ width: number, height: number }>((resolve) => {
+            Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), () => resolve({ width: 0, height: 0 }));
+        });
+        width = size.width;
+        height = size.height;
+    } catch (e) { /* ignore */ }
+
+    if (width === 0 || height === 0) return { uri, textResult: initialResult, text: initialClean, score: initialScore };
+
+    const skewAngle = calculateDeskewAngle(initialResult);
+    const roi = calculateRoi(initialResult, width, height);
+
+    console.log(`[OCR] Analysis - Score: ${initialScore}, Skew: ${skewAngle.toFixed(2)}, ROI Content: ${roi ? 'Found' : 'Full Page'}`);
+
+    // 3. Define Actions
+    // Strategy: Rotation takes precedence over crop to avoid coordinate math hell
+    let finalUri = uri;
+    let actionTaken = false;
+
+    if (Math.abs(skewAngle) >= 1.0) {
+        console.log(`[OCR] Action: Deskewing by ${skewAngle} deg`);
+        try {
+            const manip = await ImageManipulator.manipulateAsync(
+                uri,
+                [{ rotate: -skewAngle }], // Counter-rotate
+                { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
+            );
+            finalUri = manip.uri;
+            actionTaken = true;
+        } catch (e) {
+            console.warn('[OCR] Deskew failed', e);
+        }
+    } else if (roi) {
+        console.log(`[OCR] Action: Cropping ROI`);
+        try {
+            const manip = await ImageManipulator.manipulateAsync(
+                uri,
+                [{ crop: roi }],
+                { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
+            );
+            finalUri = manip.uri;
+            actionTaken = true;
+        } catch (e) {
+            console.warn('[OCR] Crop failed', e);
+        }
+    }
+
+    if (!actionTaken) {
+        return { uri, textResult: initialResult, text: initialClean, score: initialScore };
+    }
+
+    // 4. Re-run OCR on improved image
+    const finalResult = await TextRecognition.recognize(finalUri, TextRecognitionScript.KOREAN);
+    const finalText = filterByConfidence(finalResult, 0.4);
+    const finalClean = correctOcrTypos(finalText);
+    const finalScore = scoreOcrText(finalClean);
+
+    console.log(`[OCR] Post-Process Result - Old Score: ${initialScore} -> New Score: ${finalScore}`);
+
+    // Return the better one
+    if (finalScore >= initialScore) {
+        return { uri: finalUri, textResult: finalResult, text: finalClean, score: finalScore };
+    } else {
+        console.log('[OCR] Improvement failed, reverting to original');
+        return { uri, textResult: initialResult, text: initialClean, score: initialScore };
+    }
+}
+
+// ==========================================
 // Main Pipeline
 // ==========================================
 
@@ -609,37 +789,53 @@ export async function extractTextFromImage(uri: string, classification: ImageTyp
             return { text: cached as string, score: 80 };
         }
 
-        const variants = await buildAdaptiveVariants(uri, classification);
-        console.log(`[OCR] Variants generated: ${variants.length}`);
-
+        // --- NEW PIPELINE START --- 
         let bestText = "";
         let bestScore = -1;
 
-        for (const [index, variantUri] of variants.entries()) {
-            try {
-                const res = await TextRecognition.recognize(variantUri, TextRecognitionScript.KOREAN);
+        if (isPreprocessEnabled()) {
+            console.log('[OCR] Advanced Preprocessing Pipeline Enabled');
+            // 1. Resize for Speed/Standardization
+            const resizedUri = await preprocessImage(uri, 1280);
 
-                const rawText = filterByConfidence(res, 0.4);
-                // ✅ 상대 날짜 전처리 제거 - OpenAI가 컨텍스트(명시적 날짜)를 보고 직접 판단
-                const processedText = correctOcrTypos(rawText);
-                const score = scoreOcrText(processedText);
+            // 2. Smart Enhance (Deskew / Roi)
+            const result = await performAdvancedPreprocessing(resizedUri);
 
-                console.log(`[OCR] Variant ${index} Score: ${score}`);
+            bestText = result.text;
+            bestScore = result.score;
 
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestText = processedText;
+        } else {
+            console.log('[OCR] Standard Legacy Mode');
+            const variants = await buildAdaptiveVariants(uri, classification);
+            for (const [index, variantUri] of variants.entries()) {
+                try {
+                    const res = await TextRecognition.recognize(variantUri, TextRecognitionScript.KOREAN);
+                    const rawText = filterByConfidence(res, 0.4);
+                    const processedText = correctOcrTypos(rawText);
+                    const score = scoreOcrText(processedText);
+
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestText = processedText;
+                    }
+                    if (bestScore > 80) break;
+                } catch (err) {
+                    console.warn(`[OCR] Variant ${index} failed:`, err);
                 }
-
-                if (bestScore > 80) break;
-
-            } catch (err) {
-                console.warn(`[OCR] Variant ${index} failed:`, err);
             }
         }
+        // --- NEW PIPELINE END ---
 
-        if (bestScore < 50) {
-            console.log('[OCR] Quality low (<50), attempting Google Vision (Stage 3)...');
+        // Vision Fallback - Stricter Rules
+        const isLowQuality = bestScore < 15;
+        const isTooShort = bestText.length < MIN_TEXT_LEN;
+        const isNoisy = (bestText.match(/[^a-zA-Z0-9가-힣\s]/g) || []).length / (bestText.length || 1) > 0.4;
+
+        console.log(`[OCR] Advanced Result - Text Length: ${bestText.length}, Score: ${bestScore}, LowQuality: ${isLowQuality}`);
+
+        if (isLowQuality || isTooShort || isNoisy) {
+            console.log(`[OCR] Quality Fail (Score:${bestScore}, Len:${bestText.length}, Noise:${isNoisy}). Triggering Vision (Stage 3)...`);
+
             try {
                 const visionText = await extractTextWithGoogleVision(uri);
                 const visionScore = scoreOcrText(visionText);
@@ -662,7 +858,10 @@ export async function extractTextFromImage(uri: string, classification: ImageTyp
             success: usable,
             textLength: bestText.length,
             confidence: bestScore / 100,
-            metadata: { score: bestScore, variants: variants.length }
+            metadata: {
+                score: bestScore,
+                pipeline: isPreprocessEnabled() ? 'advanced' : 'legacy'
+            }
         });
 
         if (usable) {
