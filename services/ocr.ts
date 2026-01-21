@@ -9,6 +9,15 @@ import { extractTextWithGoogleVision } from './GoogleVisionService';
 import { createOcrLogger, getCurrentOcrLogger } from './OcrLogger';
 import { getImageHash } from './imageHash';
 import { ImageType } from './ImageClassifier';
+import {
+    classifyDocument,
+    extractFields,
+    isExtractionValid,
+    isLowEndDevice,
+    incrementStage1Count,
+    incrementStage2Count,
+    incrementVisionFallbackCount,
+} from './TFLiteService';
 
 const MIN_TEXT_LEN = 15;
 
@@ -826,16 +835,81 @@ export async function extractTextFromImage(uri: string, classification: ImageTyp
         }
         // --- NEW PIPELINE END ---
 
-        // Vision Fallback - Stricter Rules
-        const isLowQuality = bestScore < 15;
+        // ===========================================
+        // TFLite Gate A/B Integration
+        // ===========================================
+        let visionAlreadyTriggered = false;
+        let tfliteFields: { date?: string; merchant?: string; amount?: number } = {};
+
+        // Gate A: Determine if additional processing needed
+        if (bestScore < 85) {
+            // score < 70: Run TFLite Stage 1
+            if (bestScore < 70) {
+                console.log('[OCR] Gate A: score < 70, running TFLite Stage 1');
+                try {
+                    incrementStage1Count();
+                    const classification = await classifyDocument(uri);
+                    const lowEnd = await isLowEndDevice();
+
+                    // Gate B: Determine Stage 2 execution
+                    if (classification.receiptProb >= 0.70) {
+                        console.log('[OCR] Gate B: receiptProb >= 0.70, Stage 2');
+                        if (!lowEnd) {
+                            incrementStage2Count();
+                            tfliteFields = await extractFields(uri);
+                            // Check if extraction is valid (2+ fields)
+                            if (!isExtractionValid(tfliteFields)) {
+                                console.log('[OCR] Stage 2 result incomplete, falling back to OCR');
+                                tfliteFields = {};
+                            }
+                        }
+                    } else if (classification.receiptProb >= 0.50 && classification.receiptProb < 0.70) {
+                        console.log('[OCR] Gate B: 0.5-0.7 zone');
+                        if (lowEnd) {
+                            // Low-end: Vision fallback
+                            visionAlreadyTriggered = true;
+                            incrementVisionFallbackCount();
+                            try {
+                                const visionText = await extractTextWithGoogleVision(uri);
+                                const visionScore = scoreOcrText(visionText);
+                                if (visionScore > bestScore) {
+                                    bestText = correctOcrTypos(visionText);
+                                    bestScore = visionScore;
+                                }
+                            } catch (e) {
+                                console.warn('[OCR] Vision fallback failed');
+                            }
+                        } else {
+                            // High-end: Stage 2
+                            incrementStage2Count();
+                            tfliteFields = await extractFields(uri);
+                            if (!isExtractionValid(tfliteFields)) tfliteFields = {};
+                        }
+                    } else if (classification.receiptProb < 0.50 && bestScore < 60) {
+                        console.log('[OCR] Gate B: low prob + low score, Stage 2');
+                        if (!lowEnd) {
+                            incrementStage2Count();
+                            tfliteFields = await extractFields(uri);
+                            if (!isExtractionValid(tfliteFields)) tfliteFields = {};
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[OCR] TFLite processing failed:', e);
+                }
+            }
+            // 70-84: Deskew/ROI already done above, no TFLite
+        }
+
+        // Vision Fallback (if not already triggered and score still low)
+        const isLowQuality = bestScore < 50;
         const isTooShort = bestText.length < MIN_TEXT_LEN;
         const isNoisy = (bestText.match(/[^a-zA-Z0-9가-힣\s]/g) || []).length / (bestText.length || 1) > 0.4;
 
-        console.log(`[OCR] Advanced Result - Text Length: ${bestText.length}, Score: ${bestScore}, LowQuality: ${isLowQuality}`);
+        console.log(`[OCR] Result - Length: ${bestText.length}, Score: ${bestScore}`);
 
-        if (isLowQuality || isTooShort || isNoisy) {
-            console.log(`[OCR] Quality Fail (Score:${bestScore}, Len:${bestText.length}, Noise:${isNoisy}). Triggering Vision (Stage 3)...`);
-
+        if (!visionAlreadyTriggered && (isLowQuality || isTooShort || isNoisy)) {
+            console.log(`[OCR] Vision Fallback triggered`);
+            incrementVisionFallbackCount();
             try {
                 const visionText = await extractTextWithGoogleVision(uri);
                 const visionScore = scoreOcrText(visionText);
@@ -922,17 +996,21 @@ function parseRelativeHeaderLine(line: string): { word: RelativeWord; time: stri
 function parseAnchorAbsLine(line: string): { year?: number; mm: number; dd: number; time?: string } | null {
     // 1. Try YYYY/MM/DD or YY/MM/DD
     // Matches: 2026/01/14, 26/01/14, 2026-01-14, 26-01-14
-    const ymdMatch = line.match(/(?:^|\s)(20\d{2}|\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})(?:\s+(\d{1,2}:\d{2}))?/);
+    const ymdMatch = line.match(/(?:^|\D)(20\d{2}|\d{2})\s*[.\-\/]\s*(\d{1,2})\s*[.\-\/]\s*(\d{1,2})(?:\s+(\d{1,2}:\d{2}))?/);
     if (ymdMatch) {
         let y = Number(ymdMatch[1]);
         if (y < 100) y += 2000; // 26 -> 2026
+        // console.log(`[OCR] Anchor Found (YMD): ${y}-${ymdMatch[2]}-${ymdMatch[3]}`);
         return { year: y, mm: Number(ymdMatch[2]), dd: Number(ymdMatch[3]), time: ymdMatch[4] };
     }
 
-    // 2. Fallback to MM/DD
-    // supports: 01/10 16:11  |  1/10 16:11  |  01/10
-    const m = line.match(/(?:^|\s)(\d{1,2})[\/.-](\d{1,2})(?:\s+(\d{1,2}:\d{2}))?/);
+    // 2. Fallback to MM/DD (Relaxed)
+    // supports: 01/10 16:11  |  1/10 16:11  |  01/10  |  날짜: 01/10
+    // (?:^|\D) -> Allows start-of-line OR any non-digit prefix (e.g. space, korean char, colon)
+    const m = line.match(/(?:^|\D)(\d{1,2})\s*[\/.-]\s*(\d{1,2})(?:\s+(\d{1,2}:\d{2}))?/);
     if (!m) return null;
+
+    // console.log(`[OCR] Anchor Found (MD): ${m[1]}/${m[2]} time=${m[3]}`);
     return { mm: Number(m[1]), dd: Number(m[2]), time: m[3] };
 }
 

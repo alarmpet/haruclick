@@ -300,6 +300,46 @@ EXTRACTION RULES
   * "결제", "카드", "승인" -> STORE_PAYMENT (or BANK_TRANSFER direction="out"). NEVER classify as deposit.
   * "입금", "저금", "받음" -> BANK_TRANSFER direction="in".
   * "모임 카드" context -> STORE_PAYMENT (Expense). "모임통장" with "입금/저금" -> BANK_TRANSFER (Income).
+- INVITATION.event_type RULES:
+  * MUST be one of "wedding", "funeral", "birthday", "event".
+  * Prefer "wedding" if: 결혼식, 웨딩, 청첩장, 예식, 신랑, 신부
+  * Prefer "funeral" if: 장례, 부고, 빈소, 발인
+  * Prefer "birthday" if: 생일, 돌잔치, 첫돌, 환갑
+
+⚠️ KOREAN CONTEXT RULES (한국 맥락 기반 분류):
+
+【분류 충돌 해소 원칙】
+- 우선순위가 높은 규칙을 먼저 적용
+- 하위 규칙은 보조 필드 채움에만 사용
+- 경조사 키워드 존재 시 event_type 우선, 결제/송금은 보조 정보로 기록
+
+【경조사 (INVITATION)】 ★ 최우선
+- 부고/근조/빈소/상주/발인/장지/삼가/조문 → INVITATION(funeral)
+- 청첩장/예식/피로연/축의금/신랑/신부/예물/폐백 → INVITATION(wedding)
+- "부조/축의금/경조사비/부의금" 포함 시:
+  * category="인맥", subCategory="경조사" 우선 지정
+  * 관계 불명확 시 relation="지인" 기본값
+- 금액 키워드(축의금/부조금/부의금) → amount 추출 (숫자 정규화, "만원"→10000)
+
+【일정 (APPOINTMENT)】 ★ 일정 키워드 > 금액 키워드
+- 상담예약/면접/방문예약/검진예약/예약확정/내원예정/진료예약 → APPOINTMENT
+- 장소 키워드 우선 추출:
+  * 지점/센터/병원/의원/클리닉/홀/웨딩홀/컨벤션 → place_name
+  * 층/호/A동/B동 등 상세 주소 포함 시 → address
+- 일정+금액 동시 존재 시:
+  * "예약금/계약금" → APPOINTMENT + 메모에 금액 기재
+  * 결제/카드/송금만 존재 시 → STORE_PAYMENT
+
+【가계부 (STORE_PAYMENT/BILL/SOCIAL)】 ★ 결제수단 > 공과금 > 모임
+- 간편결제: 카카오페이/토스/네이버페이/페이코/삼성페이/애플페이/제로페이 → STORE_PAYMENT (payment_method 명시)
+- 공과금: 관리비/도시가스/전기/수도/아파트관리비/자동이체/국민연금/건강보험 → BILL (due_date 필수)
+- 모임비: 회비/동호회/정기모임/모임비/N빵/더치페이 → SOCIAL (members, per_person_amount 추출)
+- 보험료/적금: 보험료/적금/저축/납입 + 가상계좌 → BANK_TRANSFER(out), isUtility=true
+
+【OCR 오탐 보정】 ★ 대표 패턴만 적용 (과도한 보정 지양)
+- "웰딩" → "웨딩"
+- 금액: "1,000원" → 1000, "만원" → 10000
+- 유사 철자: "축이금" → "축의금"
 
 DATE NORMALIZATION
 - Combine split date/time into "YYYY-MM-DD HH:mm".
@@ -373,9 +413,9 @@ const fetchDynamicFewShots = async (): Promise<any[]> => {
 
         const timeoutPromise = new Promise<any[]>((resolve) =>
             setTimeout(() => {
-                console.warn('[OpenAI] DB Fetch Timeout (3s) -> Fallback to static');
+                console.warn('[OpenAI] DB Fetch Timeout (10s) -> Fallback to static');
                 resolve([]);
-            }, 3000)
+            }, 10000)
         );
 
         return await Promise.race([dbPromise, timeoutPromise]);
@@ -482,10 +522,56 @@ function normalizeDateTime(raw?: string): string | undefined {
 
 function normalizeInvitationEventType(raw?: string): InvitationResult['eventType'] {
     const value = (raw || '').toLowerCase();
-    if (value.includes('wedding') || value.includes('결혼')) return 'wedding';
-    if (value.includes('funeral') || value.includes('장례')) return 'funeral';
-    if (value.includes('birthday') || value.includes('생일') || value.includes('돌잔치')) return 'birthday';
+
+    // Wedding Keywords (Priority Order)
+    if (/(wedding|결혼|웨딩|혼인|청첩장|예식|신랑|신부)/.test(value)) return 'wedding';
+
+    // Funeral Keywords
+    if (/(funeral|장례|부고|빈소|발인|조문|별세|영면|위령)/.test(value)) return 'funeral';
+
+    // Birthday Keywords
+    if (/(birthday|생일|돌잔치|첫돌|백일|환갑|칠순|고희|팔순)/.test(value)) return 'birthday';
+
     return 'event';
+}
+
+const NAME_BLACKLIST = new Set([
+    '메이크업', '웨딩', '호텔', '컨벤션', '블로그', '후기', '리뷰', '스튜디오',
+    '청첩장', '사진', '촬영', '문의', '예식', '장소', '오시는길', '안내',
+    '결혼식', '돌잔치', '장례식', '빈소', '발인', '네이버', '카카오',
+    '전주', '서울', '부산', '대구', '인천', '광주', '대전', '울산'
+]);
+
+function isValidKoreanName(name: string): boolean {
+    if (!name) return false;
+    const clean = name.trim().replace(/[>:.*@\s]/g, '');
+
+    // 1. Blacklist
+    if (NAME_BLACKLIST.has(clean)) return false;
+    if ([...NAME_BLACKLIST].some(bad => clean.includes(bad))) return false;
+
+    // 2. Length (2-4 chars typical)
+    if (clean.length < 2 || clean.length > 4) return false;
+
+    // 3. All Korean (no numbers/english)
+    if (!/^[가-힣]+$/.test(clean)) return false;
+
+    return true;
+}
+
+function extractNameFromCompound(compound: string): string | null {
+    // "김연희메이크업" -> "김연희"
+    const match = compound.match(/^([가-힣]{2,4})(메이크업|웨딩|스튜디오|뷰티)/);
+    if (match && isValidKoreanName(match[1])) {
+        return match[1];
+    }
+    return null;
+}
+
+function searchAnyKoreanName(text: string): string[] {
+    // Find any 2-4 char Korean word that might be a name
+    const candidates = text.match(/[가-힣]{2,4}/g) || [];
+    return candidates.filter(c => isValidKoreanName(c));
 }
 
 function extractInvitationMainNames(text: string): string[] {
@@ -506,6 +592,21 @@ function extractInvitationMainNames(text: string): string[] {
         }
     }
     return names;
+}
+
+function cleanJsonString(str: string): string {
+    if (!str) return '{}';
+    // 1. Remove markdown code blocks
+    str = str.replace(/```json/gi, '').replace(/```/g, '');
+    // 2. Find JSON boundaries
+    const startIndex = str.indexOf('{');
+    const endIndex = str.lastIndexOf('}');
+    if (startIndex !== -1 && endIndex > startIndex) {
+        return str.substring(startIndex, endIndex + 1);
+    }
+    // 3. If no valid JSON found, warn and return empty
+    console.warn('[cleanJsonString] No valid JSON structure found');
+    return '{}';
 }
 
 // ========================================
@@ -576,7 +677,16 @@ export async function analyzeImageText(text: string, options?: { ocrScore?: numb
             throw new Error(`OpenAI response missing content. Status: ${response.status}, Error: ${data.error?.message || 'Unknown'}`);
         }
 
-        const result = JSON.parse(content);
+        const sanitized = cleanJsonString(content);
+        let result;
+        try {
+            result = JSON.parse(sanitized);
+        } catch (parseErr: any) {
+            console.error('[OpenAI Text] JSON Parse Error:', parseErr.message);
+            console.error('[OpenAI Text] Response snippet:', content?.substring(0, 200));
+            throw parseErr;
+        }
+
         const transactionsRaw = Array.isArray(result.transactions) ? result.transactions : [result];
         const transactions = transactionsRaw.length > 0 ? transactionsRaw : [result];
         const virtualAccountPayment = isVirtualAccountPaymentText(text || '');
@@ -647,18 +757,56 @@ export async function analyzeImageText(text: string, options?: { ocrScore?: numb
                     redeemCode: item.redeem_code
                 } as GifticonResult);
             } else if (finalType === 'INVITATION') {
-                const hostNames = item.host_names && item.host_names.length
-                    ? item.host_names
-                    : extractInvitationMainNames(text);
+                // Name Extraction Strategy
+                let mainName: string | undefined;
+
+                // 1. Try OpenAI's host_names first
+                if (item.host_names?.length) {
+                    mainName = item.host_names.find((n: string) => isValidKoreanName(n));
+                    // 1b. Try compound extraction
+                    if (!mainName) {
+                        for (const n of item.host_names) {
+                            const extracted = extractNameFromCompound(n);
+                            if (extracted) { mainName = extracted; break; }
+                        }
+                    }
+                }
+
+                // 2. Regex patterns (신랑/신부/장남 등)
+                if (!mainName) {
+                    const regexNames = extractInvitationMainNames(text);
+                    mainName = regexNames.find(n => isValidKoreanName(n));
+                }
+
+                // 3. Aggressive search (last resort)
+                if (!mainName) {
+                    const anyNames = searchAnyKoreanName(text);
+                    if (anyNames.length > 0) {
+                        mainName = anyNames[0]; // Take first valid name
+                    }
+                }
+
+                // Fallback: If OpenAI didn't provide event_type, check raw OCR text
+                let eventTypeRaw = item.event_type;
+                if (!eventTypeRaw) {
+                    if (/(웨딩|청첩장|결혼|예식|신랑|신부)/.test(text)) {
+                        eventTypeRaw = 'wedding';
+                    } else if (/(부고|장례|빈소|발인|별세)/.test(text)) {
+                        eventTypeRaw = 'funeral';
+                    } else if (/(생일|돌잔치|환갑|칠순)/.test(text)) {
+                        eventTypeRaw = 'birthday';
+                    }
+                }
+
                 scannedDataArray.push({
                     ...commonData,
                     type: 'INVITATION',
-                    eventType: normalizeInvitationEventType(item.event_type),
+                    eventType: normalizeInvitationEventType(eventTypeRaw),
                     eventDate: normalizeDateTime(item.date_or_datetime) || item.date_or_datetime,
                     eventLocation: item.place_name,
                     address: item.address,
-                    mainName: hostNames?.[0],
-                    hostNames,
+                    mainName: mainName, // Updated to use refined name
+                    hostNames: item.host_names,
                     recommendedAmount: item.recommended_amount
                 } as InvitationResult);
             } else if (finalType === 'OBITUARY') {
@@ -889,7 +1037,15 @@ export async function analyzeImageVisual(base64Image: string): Promise<ScannedDa
             throw new Error(`OpenAI response missing content. Status: ${response.status}, Error: ${data.error?.message || 'Unknown'}`);
         }
 
-        const parsed = JSON.parse(content);
+        const sanitized = cleanJsonString(content);
+        let parsed;
+        try {
+            parsed = JSON.parse(sanitized);
+        } catch (parseErr: any) {
+            console.error('[OpenAI Vision] JSON Parse Error:', parseErr.message);
+            console.error('[OpenAI Vision] Response snippet:', content?.substring(0, 200));
+            throw parseErr;
+        }
 
         // Normalize to Array - process all results
         const results = Array.isArray(parsed.transactions) ? parsed.transactions : [parsed];

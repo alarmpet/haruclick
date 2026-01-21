@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet, Modal } from 'react-native';
+import React, { createContext, useContext, useState, ReactNode, useEffect, useRef } from 'react';
+import { View, Text, ActivityIndicator, StyleSheet, Modal, Animated } from 'react-native';
 import { Colors } from '../constants/Colors';
 import { LOADING_TIPS } from '../constants/LoadingTips';
 
@@ -10,27 +10,64 @@ type LoadingContextType = {
 
 const LoadingContext = createContext<LoadingContextType | undefined>(undefined);
 
+const TIP_COLORS = [
+    '#FFD700', // Gold
+    '#00FFFF', // Cyan
+    '#FF69B4', // HotPink
+    '#7FFF00', // Chartreuse
+    '#FFA500', // Orange
+    '#E0B0FF', // Mauve
+    '#87CEEB', // SkyBlue
+    '#F0E68C', // Khaki
+];
+
+const RotatingTip = () => {
+    const [index, setIndex] = useState(() => Math.floor(Math.random() * LOADING_TIPS.length));
+    const fadeAnim = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+        const timer = setInterval(() => {
+            // Fade Out
+            Animated.timing(fadeAnim, {
+                toValue: 0,
+                duration: 500,
+                useNativeDriver: true,
+            }).start(() => {
+                // Change Text
+                setIndex((prev) => (prev + 1) % LOADING_TIPS.length);
+                // Fade In
+                Animated.timing(fadeAnim, {
+                    toValue: 1,
+                    duration: 500,
+                    useNativeDriver: true,
+                }).start();
+            });
+        }, 3000); // 3 total cycle (wait + anim)
+
+        return () => clearInterval(timer);
+    }, []);
+
+    const tip = LOADING_TIPS[index];
+    const color = TIP_COLORS[index % TIP_COLORS.length];
+
+    return (
+        <Animated.Text style={[styles.quote, { color, opacity: fadeAnim }]}>
+            {tip}
+        </Animated.Text>
+    );
+};
+
 export const LoadingProvider = ({ children }: { children: ReactNode }) => {
     const [visible, setVisible] = useState(false);
     const [message, setMessage] = useState('');
-    const [tip, setTip] = useState('');
+    const [showTip, setShowTip] = useState(false);
 
     const shouldShowInspiration = (msg: string) => /분석|analysis|analyz/i.test(msg);
-
-    const getRandomTip = () => {
-        const index = Math.floor(Math.random() * LOADING_TIPS.length);
-        return LOADING_TIPS[index];
-    };
 
     const show = (msg?: string) => {
         const nextMessage = msg ?? '';
         setMessage(nextMessage);
-
-        if (shouldShowInspiration(nextMessage)) {
-            setTip(getRandomTip());
-        } else {
-            setTip('');
-        }
+        setShowTip(shouldShowInspiration(nextMessage));
         setVisible(true);
     };
     const hide = () => setVisible(false);
@@ -44,7 +81,7 @@ export const LoadingProvider = ({ children }: { children: ReactNode }) => {
                     {message ? (
                         <View style={styles.msgContainer}>
                             <Text style={styles.msg}>{message}</Text>
-                            {tip ? <Text style={styles.quote}>{tip}</Text> : null}
+                            {showTip ? <RotatingTip /> : null}
                         </View>
                     ) : null}
                 </View>
@@ -62,11 +99,19 @@ export const useLoading = (): LoadingContextType => {
 const styles = StyleSheet.create({
     overlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
+        backgroundColor: 'rgba(0,0,0,0.7)', // Slightly darker for neon colors
         justifyContent: 'center',
         alignItems: 'center',
     },
-    msgContainer: { marginTop: 12, alignItems: 'center', paddingHorizontal: 24 },
-    msg: { color: Colors.white, fontSize: 16 },
-    quote: { color: Colors.white, fontSize: 13, marginTop: 8, opacity: 0.85, textAlign: 'center' },
+    msgContainer: { marginTop: 20, alignItems: 'center', paddingHorizontal: 30 },
+    msg: { color: Colors.white, fontSize: 18, marginBottom: 12, fontWeight: '600' },
+    quote: {
+        fontSize: 15,
+        marginTop: 8,
+        textAlign: 'center',
+        fontWeight: 'bold',
+        textShadowColor: 'rgba(0, 0, 0, 0.75)',
+        textShadowOffset: { width: -1, height: 1 },
+        textShadowRadius: 3
+    },
 });
