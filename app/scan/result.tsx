@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { saveUnifiedEvent } from '../../services/supabase';
 import { logOcrCorrections } from '../../services/ocrCorrections';
 import { getImageHash } from '../../services/imageHash';
+import { OcrFeedbackService } from '../../services/ai/OcrFeedbackService';
 
 
 import { PollService } from '../../services/PollService';
@@ -98,6 +99,7 @@ const stableStringify = (value: any): string => {
 };
 
 export default function SmartScanResultScreen() {
+    console.log('[DEBUG] SmartScanResultScreen Mounting');
     const params = useLocalSearchParams();
     const router = useRouter();
 
@@ -143,6 +145,15 @@ export default function SmartScanResultScreen() {
     const [successModalVisible, setSuccessModalVisible] = useState(false);
     const [successMessage, setSuccessMessage] = useState('');
 
+    // ✅ 직접 입력(커스텀 항목) 상태
+    const [customItems, setCustomItems] = useState<{
+        groups: string[];
+        categories: string[];
+        subCategories: string[];
+    }>({ groups: [], categories: [], subCategories: [] });
+    const [inputModalVisible, setInputModalVisible] = useState(false);
+    const [inputText, setInputText] = useState('');
+
     useFocusEffect(
         useCallback(() => {
             const loadData = async () => {
@@ -154,7 +165,7 @@ export default function SmartScanResultScreen() {
                 setImageUri(uri);
                 ocrSessionIdRef.current = session.ocrSessionId ?? null;
 
-                console.log("Loading Data... Store:", !!session.scannedDataList);
+                console.log("Loading Data... Store:", !!session.scannedDataList, "Length:", session.scannedDataList?.length);
 
                 let loadedList: ScannedData[] = [];
 
@@ -324,46 +335,86 @@ export default function SmartScanResultScreen() {
     };
 
     // ✅ 카테고리 선택 핸들러 (그룹/대분류/소분류)
+    // ✅ 카테고리 선택 핸들러 (Atomic Update)
     const handleCategorySelect = (value: string) => {
-        if (categoryModalType === 'group') {
-            // 그룹 변경 -> 카테고리, 서브카테고리 초기화
-            if (editingIndex !== null) {
-                updateEditingItem('categoryGroup', value);
-                updateEditingItem('category', '');
-                updateEditingItem('subCategory', '');
-            } else {
-                handleUpdateData('categoryGroup', value);
-                handleUpdateData('category', '');
-                handleUpdateData('subCategory', '');
-            }
-            setSelectedGroup(value as CategoryGroupType);
-            setSelectedCategory(null);
+        setDataList(prev => {
+            const newList = [...prev];
+            // 편집 중인 인덱스 또는 단일 항목의 경우 0번 인덱스 사용
+            const targetIndex = editingIndex !== null ? editingIndex : (prev.length === 1 ? 0 : -1);
 
-        } else if (categoryModalType === 'category') {
-            // 카테고리 변경 -> 서브카테고리 초기화
-            if (editingIndex !== null) {
-                updateEditingItem('category', value);
-                updateEditingItem('subCategory', '');
-                // 그룹이 없으면 자동 설정
+            if (targetIndex === -1) return prev; // 예외 처리
+
+            const currentItem = newList[targetIndex];
+            let updates: Partial<ScannedData> = {};
+
+            if (categoryModalType === 'group') {
+                // 그룹 변경 -> 하위 카테고리 초기화
+                updates = {
+                    categoryGroup: value as CategoryGroupType,
+                    category: '',
+                    subCategory: ''
+                };
+            } else if (categoryModalType === 'category') {
+                // 카테고리 변경 -> 소분류 초기화, 그룹 자동 설정
+                updates = {
+                    category: value,
+                    subCategory: ''
+                };
                 const group = CATEGORY_MAP[value]?.group;
-                if (group) updateEditingItem('categoryGroup', group);
+                if (group) {
+                    updates.categoryGroup = group;
+                }
             } else {
-                handleUpdateData('category', value);
-                handleUpdateData('subCategory', '');
-                const group = CATEGORY_MAP[value]?.group;
-                if (group) handleUpdateData('categoryGroup', group);
+                // 소분류 변경
+                updates = {
+                    subCategory: value
+                };
             }
-            setSelectedCategory(value);
-        } else {
-            // 소분류 변경
-            if (editingIndex !== null) {
-                updateEditingItem('subCategory', value);
-            } else {
-                handleUpdateData('subCategory', value);
-            }
-        }
+
+            newList[targetIndex] = {
+                ...currentItem,
+                ...updates
+            } as ScannedData;
+
+            return newList;
+        });
+
+        // UI 상태 업데이트 (선택값 표시용)
+        if (categoryModalType === 'group') setSelectedGroup(value as CategoryGroupType);
+        else if (categoryModalType === 'category') setSelectedCategory(value);
+
         setCategoryModalVisible(false);
     };
+
+    // ✅ 직접 입력 모달 열기
+    const openInputModal = () => {
+        setInputText('');
+        setInputModalVisible(true);
+    };
+
+    // ✅ 직접 입력 완료 핸들러
+    const handleInputConfirm = () => {
+        if (!inputText.trim()) {
+            Alert.alert('알림', '내용을 입력해주세요.');
+            return;
+        }
+
+        const value = inputText.trim();
+
+        // 1. 커스텀 리스트에 추가 (Session 유지)
+        setCustomItems(prev => {
+            const newState = { ...prev };
+            if (categoryModalType === 'group') newState.groups = [...prev.groups, value];
+            else if (categoryModalType === 'category') newState.categories = [...prev.categories, value];
+            else newState.subCategories = [...prev.subCategories, value];
+            return newState;
+        });
+
+        // 2. 값 선택 적용
+        handleCategorySelect(value);
+        setInputModalVisible(false);
+    };
+
 
     // ✅ 체크박스 토글 핸들러
     const toggleSelect = (index: number) => {
@@ -434,13 +485,15 @@ export default function SmartScanResultScreen() {
     };
 
     // ✅ 영수증/이체 데이터 수정 핸들러 (단일 항목용)
+    // ✅ 영수증/이체 데이터 수정 핸들러 (단일 항목용 - Functional Update)
     const handleUpdateData = (field: string, value: any) => {
-        if (dataList.length !== 1 || !data) return;
-
-        setDataList([{
-            ...data,
-            [field]: value
-        } as ScannedData]);
+        setDataList(prev => {
+            if (prev.length !== 1) return prev;
+            return [{
+                ...prev[0],
+                [field]: value
+            } as ScannedData];
+        });
     };
 
     if (dataList.length === 0) return <View style={styles.container}><ActivityIndicator /></View>;
@@ -500,6 +553,24 @@ export default function SmartScanResultScreen() {
 
             setSuccessMessage(`${selectedItems.length}건이 저장되었습니다`);
             setSuccessModalVisible(true);
+
+            // ✅ OCR 데이터 플라이휠: Few-shot 학습을 위한 사용자 피드백 처리
+            try {
+                const session = DataStore.getScanResult();
+                const ocrRawText = session.ocrRawText;
+                const originalData = originalDataRef.current?.[0] || null;
+                const hasEdits = corrections.length > 0;
+                await OcrFeedbackService.processUserFeedback(
+                    originalData,
+                    selectedItems[0],
+                    imageUri || undefined,
+                    ocrRawText,
+                    hasEdits ? 'edited_confirm' : 'quick_confirm'
+                );
+                console.log('[OCR Flywheel] Feedback processed successfully');
+            } catch (feedbackError) {
+                console.warn('[OCR Flywheel] Failed to process feedback:', feedbackError);
+            }
         } catch (e: any) {
             const errorMessage = e?.message || e?.toString() || '알 수 없는 오류';
             Alert.alert('저장 실패', `저장 중 오류가 발생했습니다.\n\n상세: ${errorMessage}`);
@@ -957,6 +1028,7 @@ export default function SmartScanResultScreen() {
     };
 
     const renderContent = () => {
+        console.log('[DEBUG] renderContent called. editingIndex:', editingIndex, 'dataList length:', dataList.length);
         // ✅ 편집 모드면 편집 화면 표시
         if (editingIndex !== null) {
             return renderEditMode();
@@ -968,7 +1040,9 @@ export default function SmartScanResultScreen() {
         }
 
         // ✅ data가 없으면 로딩 표시
+        console.log('Rendering content. Data:', !!data, 'Type:', data?.type);
         if (!data) {
+            console.log('Data is missing, showing ActivityIndicator');
             return <ActivityIndicator />;
         }
 
@@ -1729,12 +1803,15 @@ export default function SmartScanResultScreen() {
                                     if (categoryModalType === 'group') {
                                         return CATEGORY_GROUPS.map(g => ({ label: g.label, value: g.value }));
                                     } else if (categoryModalType === 'category') {
-                                        return getReviewCategoryList(selectedGroup || undefined).map(c => ({ label: c.category, value: c.category }));
+                                        const defaults = getReviewCategoryList(selectedGroup || undefined).map(c => ({ label: c.category, value: c.category }));
+                                        const customs = customItems.categories.map(c => ({ label: c, value: c }));
+                                        return [...defaults, ...customs];
                                     } else {
                                         // SubCategory
                                         const catSpec = CATEGORY_MAP[selectedCategory || '기타'];
-                                        const subs = catSpec ? catSpec.subCategories : ['기타'];
-                                        return subs.map(s => ({ label: s, value: s }));
+                                        const defaults = (catSpec ? catSpec.subCategories : ['기타']).map(s => ({ label: s, value: s }));
+                                        const customs = customItems.subCategories.map(s => ({ label: s, value: s }));
+                                        return [...defaults, ...customs];
                                     }
                                 })().map((item) => {
                                     const currentValue = categoryModalType === 'group'
@@ -1757,6 +1834,20 @@ export default function SmartScanResultScreen() {
                                     );
                                 })}
                             </View>
+
+                            {/* ✅ + 버튼: 사용자 정의 항목 추가 */}
+                            {categoryModalType !== 'group' && (
+                                <TouchableOpacity
+                                    style={styles.addCustomButton}
+                                    onPress={() => {
+                                        setCategoryModalVisible(false);
+                                        openInputModal();
+                                    }}
+                                >
+                                    <Ionicons name="add-circle-outline" size={24} color={Colors.navy} />
+                                    <Text style={styles.addCustomButtonText}>직접 입력</Text>
+                                </TouchableOpacity>
+                            )}
                         </ScrollView>
                     </View>
                 </TouchableOpacity>
@@ -1880,6 +1971,47 @@ export default function SmartScanResultScreen() {
                     router.replace('/calendar');
                 }}
             />
+
+            {/* ✅ 직접 입력 모달 */}
+            <Modal
+                visible={inputModalVisible}
+                animationType="slide"
+                transparent={true}
+                onRequestClose={() => setInputModalVisible(false)}
+            >
+                <KeyboardAvoidingView
+                    behavior={RNPlatform.OS === 'ios' ? 'padding' : 'height'}
+                    style={styles.inputModalOverlay}
+                >
+                    <View style={styles.inputModalContent}>
+                        <Text style={styles.inputModalTitle}>
+                            {categoryModalType === 'category' ? '새 카테고리 추가' : '새 상세분류 추가'}
+                        </Text>
+                        <TextInput
+                            style={styles.inputModalInput}
+                            placeholder="직접 입력..."
+                            placeholderTextColor={Colors.subText}
+                            value={inputText}
+                            onChangeText={setInputText}
+                            autoFocus
+                        />
+                        <View style={styles.inputModalButtons}>
+                            <TouchableOpacity
+                                style={styles.inputModalCancelButton}
+                                onPress={() => setInputModalVisible(false)}
+                            >
+                                <Text style={styles.inputModalCancelText}>취소</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.inputModalConfirmButton}
+                                onPress={handleInputConfirm}
+                            >
+                                <Text style={styles.inputModalConfirmText}>추가</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </KeyboardAvoidingView>
+            </Modal>
         </>
     );
 }
@@ -2398,32 +2530,32 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.white,
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
-        paddingTop: 20,
-        paddingBottom: 40,
-        maxHeight: '70%',
+        padding: 24,
+        maxHeight: '80%', // 너무 길어지지 않게 제한
     },
     categoryModalTitle: {
         fontFamily: 'Pretendard-Bold',
         fontSize: 18,
         color: Colors.text,
-        textAlign: 'center',
         marginBottom: 16,
+        textAlign: 'center',
     },
     categoryChipContainer: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        paddingHorizontal: 20,
-        gap: 10,
+        gap: 8,
     },
     categoryChip: {
         paddingHorizontal: 16,
         paddingVertical: 10,
         borderRadius: 20,
-        backgroundColor: '#F0F0F0',
-        marginBottom: 8,
+        backgroundColor: '#F5F5F5',
+        borderWidth: 1,
+        borderColor: '#E0E0E0',
     },
     categoryChipSelected: {
-        backgroundColor: Colors.orange,
+        backgroundColor: '#E8EAF6', // Navy tint
+        borderColor: Colors.navy,
     },
     categoryChipText: {
         fontFamily: 'Pretendard-Medium',
@@ -2431,8 +2563,25 @@ const styles = StyleSheet.create({
         color: Colors.text,
     },
     categoryChipTextSelected: {
+        color: Colors.navy,
+        fontFamily: 'Pretendard-Bold',
+    },
+    // ✅ 직접 추가 버튼 스타일
+    categoryChipAdd: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 20,
+        backgroundColor: Colors.navy,
+        gap: 4,
+    },
+    categoryChipAddText: {
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 14,
         color: Colors.white,
     },
+
     // ✅ 날짜 없음 경고 스타일
     transactionCardWarning: {
         borderWidth: 2,
@@ -2572,5 +2721,83 @@ const styles = StyleSheet.create({
         fontSize: 13,
         color: Colors.subText,
         textDecorationLine: 'underline',
+    },
+    // ✅ 사용자 정의 카테고리 + 버튼 스타일
+    addCustomButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 16,
+        paddingVertical: 12,
+        borderWidth: 1,
+        borderColor: Colors.navy,
+        borderStyle: 'dashed',
+        borderRadius: 8,
+    },
+    addCustomButtonText: {
+        marginLeft: 8,
+        fontFamily: 'Pretendard-Medium',
+        fontSize: 15,
+        color: Colors.navy,
+    },
+    // ✅ 직접 입력 모달 스타일
+    inputModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    inputModalContent: {
+        backgroundColor: 'white',
+        borderRadius: 16,
+        padding: 24,
+        width: '85%',
+        maxWidth: 400,
+    },
+    inputModalTitle: {
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 18,
+        color: Colors.text,
+        marginBottom: 16,
+        textAlign: 'center',
+    },
+    inputModalInput: {
+        borderWidth: 1,
+        borderColor: Colors.border,
+        borderRadius: 8,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        fontFamily: 'Pretendard-Regular',
+        fontSize: 16,
+        color: Colors.text,
+        marginBottom: 20,
+    },
+    inputModalButtons: {
+        flexDirection: 'row',
+        gap: 12,
+    },
+    inputModalCancelButton: {
+        flex: 1,
+        paddingVertical: 12,
+        borderRadius: 8,
+        backgroundColor: Colors.background,
+        alignItems: 'center',
+    },
+    inputModalCancelText: {
+        fontFamily: 'Pretendard-SemiBold',
+        fontSize: 15,
+        color: Colors.subText,
+    },
+    inputModalConfirmButton: {
+        flex: 1,
+        paddingVertical: 12,
+        borderRadius: 8,
+        backgroundColor: Colors.navy,
+        alignItems: 'center',
+    },
+    inputModalConfirmText: {
+        fontFamily: 'Pretendard-SemiBold',
+        fontSize: 15,
+        color: 'white',
     },
 });

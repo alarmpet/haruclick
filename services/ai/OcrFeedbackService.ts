@@ -2,6 +2,7 @@ import { ScannedData } from './OpenAIService';
 import { calculateFinalConfidence } from './ConfidenceCalculator';
 import { supabase } from '../supabase';
 import { getCurrentOcrLogger } from '../OcrLogger';
+import { checkFewShotQuality } from './FewShotQualityFilter';
 
 interface EditDetectionResult {
     hasEdits: boolean;
@@ -144,23 +145,23 @@ export class OcrFeedbackService {
             // We stick to the rule: High Confidence & rawText exists.
 
             if (confAfter >= 0.90 && detection.editedFields.length <= 3 && rawText) {
-                if (original.type === 'UNKNOWN' && confirmationLevel !== 'manual_entry') {
-                    // If original was Unknown but user fixed it, it's GREAT training data usually.
-                    // But plan said "Exclude Unknown". Let's stick to plan for safety unless it's very clear.
-                    // Actually, Type Change from Unknown -> Type is the MOST valuable few shot.
-                    // I will allow it if confAfter is high (which it will be due to Bonus).
+                // ✅ 품질 필터 검사
+                const qualityResult = checkFewShotQuality(rawText, final);
+
+                if (!qualityResult.passed) {
+                    console.log(`[OcrFeedback] Quality check failed: ${qualityResult.reason} (score: ${qualityResult.score})`);
+                } else {
+                    console.log(`[OcrFeedback] Quality check passed (score: ${qualityResult.score}). Inserting as pending...`);
+
+                    // ✅ DB 스키마에 맞게 수정: is_active=false로 시작 (pending 상태)
+                    await supabase.from('approved_fewshots').insert({
+                        document_type: final.type,
+                        input_text: rawText,
+                        output_json: final,
+                        priority: qualityResult.score >= 90 ? 2 : 1, // 고품질은 우선순위 2
+                        is_active: false // 관리자 승인 대기
+                    });
                 }
-
-                console.log('[OcrFeedback] Candidate for Few-shot! Inserting (Pending)...');
-
-                // ✅ DB 스키마에 맞게 수정: is_active=false로 시작 (pending 상태)
-                await supabase.from('approved_fewshots').insert({
-                    document_type: final.type, // ✅ doc_type → document_type
-                    input_text: rawText,
-                    output_json: final,
-                    priority: 1,
-                    is_active: false // ✅ status='pending' → is_active=false (관리자 승인 대기)
-                });
             }
 
         } catch (e) {

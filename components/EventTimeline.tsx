@@ -120,6 +120,13 @@ export function EventTimeline({ events: propEvents, title, onEventsChange, onEve
         return days[new Date(dateStr).getDay()];
     };
 
+    // 시간 포맷팅 ("14:30:00" => "14:30")
+    const formatTime = (timeStr?: string): string | null => {
+        if (!timeStr) return null;
+        // Handle both "HH:MM:SS" and "HH:MM" formats
+        return timeStr.substring(0, 5);
+    };
+
     if (loading && !events?.length) {
         return <View style={styles.container}><Text style={styles.emptyText}>일정을 불러오는 중...</Text></View>;
     }
@@ -161,6 +168,9 @@ export function EventTimeline({ events: propEvents, title, onEventsChange, onEve
                         <View key={event.id} style={styles.timelineItem}>
                             <View style={styles.dateContainer}>
                                 <Text style={styles.dateText}>{event.date.substring(5).replace('-', '.')}</Text>
+                                {event.startTime && (
+                                    <Text style={styles.timeText}>{formatTime(event.startTime)}</Text>
+                                )}
                                 <Text style={styles.dayText}>({day})</Text>
                             </View>
 
@@ -280,6 +290,12 @@ const styles = StyleSheet.create({
         fontFamily: 'Pretendard-Medium',
         fontSize: 12,
         color: Colors.subText,
+    },
+    timeText: {
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 13,
+        color: Colors.orange,
+        marginTop: 2,
     },
     lineWrapper: {
         alignItems: 'center',

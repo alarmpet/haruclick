@@ -4,6 +4,7 @@ interface ScanSession {
     imageUri?: string;
     scannedDataList?: ScannedData[];
     ocrSessionId?: string;
+    ocrRawText?: string;
 }
 
 class DataStoreService {
@@ -19,11 +20,12 @@ class DataStoreService {
         return DataStoreService.instance;
     }
 
-    public setScanResult(uri: string, dataList: ScannedData[], ocrSessionId?: string) {
+    public setScanResult(uri: string, dataList: ScannedData[], ocrSessionId?: string, ocrRawText?: string) {
         this.session = {
             imageUri: uri,
             scannedDataList: dataList,
-            ocrSessionId
+            ocrSessionId,
+            ocrRawText
         };
     }
 

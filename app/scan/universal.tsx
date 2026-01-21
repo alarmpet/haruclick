@@ -150,7 +150,7 @@ export default function UniversalScannerScreen() {
                     const valid = results.filter(r => r.type !== 'UNKNOWN');
                     if (valid.length > 0) {
                         console.log(`[Scan] Text analysis success: ${valid.length} result(s)`);
-                        handleScanResult(valid, uri);
+                        handleScanResult(valid, uri, preprocessed);
                         return;
                     }
                     console.log('[Scan] Text analysis returned UNKNOWN, trying vision...');
@@ -190,9 +190,9 @@ export default function UniversalScannerScreen() {
         }
     };
 
-    const handleScanResult = (dataList: ScannedData[], uri: string) => {
+    const handleScanResult = (dataList: ScannedData[], uri: string, rawText?: string) => {
         const sessionId = getCurrentOcrLogger()?.getSessionId();
-        DataStore.setScanResult(uri, dataList, sessionId);
+        DataStore.setScanResult(uri, dataList, sessionId, rawText);
         router.push({ pathname: '/scan/result', params: { imageUri: uri } });
     };
 

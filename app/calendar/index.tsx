@@ -495,15 +495,15 @@ export default function CalendarScreen() {
                 ) : (
                     // ✅ 일반 모드: 점(Dot) 태그 표시
                     <View style={styles.eventTags}>
-                        {dayEvents.slice(0, 3).map((event: any, idx: number) => (
+                        {dayEvents.slice(0, 5).map((event: any, idx: number) => (
                             <View key={idx} style={[styles.eventTag, { backgroundColor: event.color }]}>
                                 <Text style={styles.eventTagText} numberOfLines={1}>
                                     {event.name}
                                 </Text>
                             </View>
                         ))}
-                        {dayEvents.length > 3 && (
-                            <Text style={styles.moreText}>+{dayEvents.length - 3}</Text>
+                        {dayEvents.length > 5 && (
+                            <Text style={styles.moreText}>+{dayEvents.length - 5}</Text>
                         )}
                     </View>
                 )}
@@ -758,23 +758,35 @@ export default function CalendarScreen() {
                 ) : (
                     <>
                         {viewMode === 'month' && (
-                            <Calendar
-                                key={currentDate} // 날짜 변경 시 강제 리렌더링
-                                markedDates={markedDates}
-                                theme={{
-                                    calendarBackground: Colors.navy,
-                                    textSectionTitleColor: 'transparent',
-                                    monthTextColor: 'transparent',
-                                    textMonthFontFamily: 'Pretendard-Bold',
-                                    textMonthFontSize: 1,
+                            <ScrollView
+                                style={{
+                                    flex: 1,
+                                    borderTopWidth: 0.5,
+                                    borderTopColor: 'rgba(255,255,255,0.12)',
+                                    borderLeftWidth: 0.5,
+                                    borderLeftColor: 'rgba(255,255,255,0.12)'
                                 }}
-                                enableSwipeMonths={true}
-                                dayComponent={renderDay as any}
-                                onMonthChange={(date) => setCurrentDate(date.dateString)}
-                                current={currentDate}
-                                hideArrows={true}
-                                hideDayNames={true}
-                            />
+                                showsVerticalScrollIndicator={false}
+                                bounces={false}
+                            >
+                                <Calendar
+                                    key={currentDate} // 날짜 변경 시 강제 리렌더링
+                                    markedDates={markedDates}
+                                    theme={{
+                                        calendarBackground: Colors.navy,
+                                        textSectionTitleColor: 'transparent',
+                                        monthTextColor: 'transparent',
+                                        textMonthFontFamily: 'Pretendard-Bold',
+                                        textMonthFontSize: 1,
+                                    }}
+                                    enableSwipeMonths={true}
+                                    dayComponent={renderDay as any}
+                                    onMonthChange={(date) => setCurrentDate(date.dateString)}
+                                    current={currentDate}
+                                    hideArrows={true}
+                                    hideDayNames={true}
+                                />
+                            </ScrollView>
                         )}
                         {viewMode === 'day' && renderDayView()}
                         {viewMode === 'week' && renderWeekView()}
@@ -1126,7 +1138,7 @@ const styles = StyleSheet.create({
     filterContainer: {
         flexDirection: 'row',
         justifyContent: 'center',
-        paddingVertical: 8,
+        paddingVertical: 4,
         gap: 8,
         backgroundColor: Colors.navy,
     },
@@ -1147,9 +1159,11 @@ const styles = StyleSheet.create({
     },
     weekHeader: {
         flexDirection: 'row',
-        paddingHorizontal: 8,
-        paddingVertical: 8,
+        paddingHorizontal: 0,
+        paddingVertical: 4,
         backgroundColor: Colors.navy,
+        borderBottomWidth: 0,
+        marginBottom: 0,
     },
     weekDay: {
         flex: 1,
@@ -1159,12 +1173,14 @@ const styles = StyleSheet.create({
         color: '#888',
     },
     dayCell: {
-        width: (width - 16) / 7,
-        minHeight: 80,
+        width: width / 7,
+        height: 120,
         paddingVertical: 4,
         paddingHorizontal: 2,
-        borderTopWidth: 0.5,
-        borderTopColor: 'rgba(255,255,255,0.1)',
+        borderRightWidth: 0.5,
+        borderRightColor: 'rgba(255,255,255,0.12)',
+        borderBottomWidth: 0.5,
+        borderBottomColor: 'rgba(255,255,255,0.12)',
     },
     dayNumber: {
         width: 24,
@@ -1200,6 +1216,8 @@ const styles = StyleSheet.create({
     eventTags: {
         marginTop: 2,
         gap: 1,
+        maxHeight: 80,
+        overflow: 'hidden',
     },
     eventTag: {
         paddingHorizontal: 4,
@@ -1210,6 +1228,7 @@ const styles = StyleSheet.create({
     eventTagText: {
         fontFamily: 'Pretendard-Regular',
         fontSize: 9,
+        lineHeight: 11,
         color: '#fff',
     },
     moreText: {
