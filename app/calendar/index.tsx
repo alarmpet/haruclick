@@ -735,23 +735,32 @@ export default function CalendarScreen() {
 
             {/* 필터 (모든 뷰에서 보일지, 월별만 보일지 선택 필요하지만 일단 유지) */}
             {/* 필터 (Dot + Text 스타일) */}
+            {/* 필터 (체크박스 스타일 + 애니메이션) */}
             <View style={styles.filterContainer}>
-                <TouchableOpacity style={styles.filterChip} onPress={() => toggleFilter('ceremony')}>
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: filters.ceremony ? CATEGORY_COLORS.ceremony : '#555' }} />
-                    <Text style={[styles.filterText, !filters.ceremony && { color: '#555' }]}>경조사</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.filterChip} onPress={() => toggleFilter('todo')}>
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: filters.todo ? CATEGORY_COLORS.todo : '#555' }} />
-                    <Text style={[styles.filterText, !filters.todo && { color: '#555' }]}>할일</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.filterChip} onPress={() => toggleFilter('schedule')}>
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: filters.schedule ? CATEGORY_COLORS.schedule : '#555' }} />
-                    <Text style={[styles.filterText, !filters.schedule && { color: '#555' }]}>일정</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.filterChip} onPress={() => toggleFilter('expense')}>
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: filters.expense ? CATEGORY_COLORS.expense : '#555' }} />
-                    <Text style={[styles.filterText, !filters.expense && { color: '#555' }]}>가계부</Text>
-                </TouchableOpacity>
+                <AnimatedFilterChip
+                    label="경조사"
+                    checked={filters.ceremony}
+                    color={CATEGORY_COLORS.ceremony}
+                    onPress={() => toggleFilter('ceremony')}
+                />
+                <AnimatedFilterChip
+                    label="할일"
+                    checked={filters.todo}
+                    color={CATEGORY_COLORS.todo}
+                    onPress={() => toggleFilter('todo')}
+                />
+                <AnimatedFilterChip
+                    label="일정"
+                    checked={filters.schedule}
+                    color={CATEGORY_COLORS.schedule}
+                    onPress={() => toggleFilter('schedule')}
+                />
+                <AnimatedFilterChip
+                    label="가계부"
+                    checked={filters.expense}
+                    color={CATEGORY_COLORS.expense}
+                    onPress={() => toggleFilter('expense')}
+                />
             </View>
 
             {/* 요일 헤더 (월별 보기에만) */}
@@ -1587,3 +1596,57 @@ const styles = StyleSheet.create({
         color: '#FF6B6B',
     },
 });
+
+// ----------------------------------------------------------------------
+// Internal Components
+// ----------------------------------------------------------------------
+
+interface FilterChipProps {
+    label: string;
+    checked: boolean;
+    color: string;
+    onPress: () => void;
+}
+
+function AnimatedFilterChip({ label, checked, color, onPress }: FilterChipProps) {
+    // 애니메이션 값: checked 상태일 때 1, 아닐 때 0
+    const animatedValue = useRef(new Animated.Value(checked ? 1 : 0)).current;
+
+    useEffect(() => {
+        Animated.spring(animatedValue, {
+            toValue: checked ? 1 : 0,
+            useNativeDriver: true,
+            speed: 20,
+            bounciness: 8,
+        }).start();
+    }, [checked]);
+
+    const scale = animatedValue.interpolate({
+        inputRange: [0, 0.5, 1],
+        outputRange: [1, 0.8, 1], // 클릭 시 살짝 줄어들었다가 커지는 효과
+    });
+
+    return (
+        <TouchableOpacity
+            style={styles.filterChip}
+            onPress={onPress}
+            activeOpacity={0.7}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked }}
+        >
+            <Animated.View style={{ transform: [{ scale }] }}>
+                <Ionicons
+                    name={checked ? "checkbox" : "square-outline"}
+                    size={18}
+                    color={checked ? color : '#888'}
+                />
+            </Animated.View>
+            <Text style={[
+                styles.filterText,
+                checked ? { color: '#fff', fontFamily: 'Pretendard-Bold' } : { color: '#aaa' }
+            ]}>
+                {label}
+            </Text>
+        </TouchableOpacity>
+    );
+}

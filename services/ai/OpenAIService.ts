@@ -341,6 +341,31 @@ EXTRACTION RULES
 - 금액: "1,000원" → 1000, "만원" → 10000
 - 유사 철자: "축이금" → "축의금"
 
+⚠️ PAYMENT APP HISTORY SCREEN RULES (결제앱 사용내역 화면):
+
+【헤더 기반 결제수단 추론】
+- "N pay", "네이버페이", "포인트·머니" → payment_method = "네이버페이"
+- "카카오페이", "KakaoPay" → payment_method = "카카오페이"
+- "토스", "Toss" → payment_method = "토스"
+- 헤더에서 감지된 결제수단은 해당 화면의 모든 거래에 적용
+
+【사용내역 금액 규칙】
+- "사용" 탭/필터가 활성화된 화면 → 모든 거래는 지출(out)
+- -44,051 원 → amount = 44051, direction = "out" (마이너스/콤마 제거 후 양수화)
+- 01.18. → YYYY-01-18 (현재 연도 사용)
+- 상품명 내 > 제거: "상주 백오이 3입 외 2개>" → "상주 백오이 3입 외 2개"
+
+【리스트 형태 거래 추출】
+- 한 행 = 하나의 거래 (날짜 | 상품명 | 금액 | 상태)
+- 상태 "결제" → type = "STORE_PAYMENT"
+- 각 행마다 별도 transaction 생성
+
+【Columnar Layout Mapping (CRITICAL)】
+- 결제앱 화면은 상품명 열과 금액 열이 분리되어 읽힐 수 있음
+- 상품명 리스트 뒤에 금액 리스트가 등장하면, 순서대로 1:1 매핑 (1번째 상품 ↔ 1번째 금액)
+- 금액 없이 STORE_PAYMENT를 반환하지 말 것 (amount 필수)
+- 금액이 보이는데 상품명과 분리되어 있으면, 반드시 순서대로 연결하여 추출
+
 DATE NORMALIZATION
 - Combine split date/time into "YYYY-MM-DD HH:mm".
 - If year is missing, assume the current year.
@@ -411,11 +436,13 @@ const fetchDynamicFewShots = async (): Promise<any[]> => {
             .limit(15)
             .then(res => res.data?.map(d => d.output_json) || []);
 
+        const startTime = Date.now();
         const timeoutPromise = new Promise<any[]>((resolve) =>
             setTimeout(() => {
-                console.warn('[OpenAI] DB Fetch Timeout (10s) -> Fallback to static');
+                const elapsed = Date.now() - startTime;
+                console.warn(`[OpenAI] DB Fetch Timeout (${elapsed}ms) -> Fallback to static`);
                 resolve([]);
-            }, 10000)
+            }, 3000)
         );
 
         return await Promise.race([dbPromise, timeoutPromise]);

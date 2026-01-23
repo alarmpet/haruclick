@@ -15,7 +15,7 @@ echo.
 echo [REQUIREMENTS]
 echo  - Android device connected via USB (with USB Debugging ON)
 echo    OR Android Emulator running
-echo  - Java JDK & Android SDK installed
+echo  - Java JDK and Android SDK installed
 echo.
 
 echo Step 1: Prebuilding...
@@ -28,7 +28,7 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
-echo Step 2: Compiling & Installing...
+echo Step 2: Compiling and Installing...
 echo This may take a while for the first time...
 call npx expo run:android
 

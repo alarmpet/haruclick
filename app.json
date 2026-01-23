@@ -58,7 +58,8 @@
         }
       ],
       "react-native-document-scanner-plugin",
-      "@config-plugins/detox"
+      "@config-plugins/detox",
+      "react-native-fast-tflite"
     ],
     "extra": {
       "router": {},

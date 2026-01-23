@@ -6,6 +6,7 @@ import { showError } from './errorHandler';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
 import { extractTextWithGoogleVision } from './GoogleVisionService';
+export { extractTextWithGoogleVision };
 import { createOcrLogger, getCurrentOcrLogger } from './OcrLogger';
 import { getImageHash } from './imageHash';
 import { ImageType } from './ImageClassifier';
@@ -20,6 +21,13 @@ import {
 } from './TFLiteService';
 
 const MIN_TEXT_LEN = 15;
+
+export function detectPaymentAppContext(text: string): string | null {
+    if (/N\s*pay|네이버페이|포인트.머니/.test(text)) return '네이버페이';
+    if (/카카오페이|KakaoPay/i.test(text)) return '카카오페이';
+    if (/토스|Toss/i.test(text)) return '토스';
+    return null;
+}
 
 // ==========================================
 // 1. Adaptive Preprocessing

@@ -13,7 +13,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Colors } from '../../constants/Colors';
 import { Ionicons } from '@expo/vector-icons';
-import { extractTextFromImage, maybePreprocessChatText } from '../../services/ocr';
+import { extractTextFromImage, maybePreprocessChatText, extractTextWithGoogleVision } from '../../services/ocr';
 import { analyzeImageText, analyzeImageVisual, ScannedData } from '../../services/ai/OpenAIService';
 import { fetchUrlContent } from '../../services/WebScraperService';
 import { DataStore } from '../../services/DataStore';
@@ -149,6 +149,19 @@ export default function UniversalScannerScreen() {
                     const ocrScore = (typeof ocrResult === 'object' && ocrResult?.score) ? ocrResult.score : 0;
                     const results = await timeoutPromise(60000, analyzeImageText(preprocessed, { ocrScore }), 'OpenAI 텍스트 분석 시간 초과');
                     const valid = results.filter(r => r.type !== 'UNKNOWN');
+
+                    // Vision Fallback: 금액 누락 감지 (Columnar OCR 대응)
+                    const storePayments = valid.filter(r => r.type === 'STORE_PAYMENT');
+                    if (storePayments.length > 0) {
+                        const missingAmountCount = storePayments.filter(r => !(r as any).amount).length;
+                        const amountDetectedCount = storePayments.filter(r => (r as any).amount).length;
+
+                        if (missingAmountCount > storePayments.length * 0.5 || amountDetectedCount <= 1) {
+                            console.log(`[Scan] Too many missing amounts (${missingAmountCount}/${storePayments.length}) -> Vision fallback`);
+                            throw new Error('Missing amounts - Vision fallback');
+                        }
+                    }
+
                     if (valid.length > 0) {
                         console.log(`[Scan] Text analysis success: ${valid.length} result(s)`);
                         handleScanResult(valid, uri, preprocessed);
@@ -157,7 +170,31 @@ export default function UniversalScannerScreen() {
                     console.log('[Scan] Text analysis returned UNKNOWN, trying vision...');
                 } catch (textError: any) {
                     console.warn('[Scan] Text analysis failed:', textError?.message);
-                    // Continue to vision fallback
+
+                    // Stage 3: Retry with Google Vision (if not already used)
+                    // 기존 ocrResult가 Google Vision이 아니었거나, 점수가 낮았다면 시도
+                    console.log('[Scan] Stage 3 Retry: Trying Google Vision before Vision fallback...');
+                    try {
+                        const googleOcr = await extractTextWithGoogleVision(uri);
+                        if (googleOcr && googleOcr.length > 5) {
+                            console.log(`[Scan] Google Vision Retry success (${googleOcr.length} chars). Re-analyzing...`);
+
+                            // 재전처리 및 분석
+                            const preprocessedRetry = maybePreprocessChatText(googleOcr);
+                            const retryResults = await timeoutPromise(60000, analyzeImageText(preprocessedRetry, { ocrScore: 90 }), 'OpenAI 텍스트 재분석 시간 초과');
+                            const validRetry = retryResults.filter(r => r.type !== 'UNKNOWN');
+
+                            if (validRetry.length > 0) {
+                                console.log(`[Scan] Text analysis (Retry) success: ${validRetry.length} result(s)`);
+                                handleScanResult(validRetry, uri, preprocessedRetry);
+                                return;
+                            }
+                        }
+                    } catch (retryError) {
+                        console.warn('[Scan] Google Vision Retry failed:', retryError);
+                    }
+
+                    // Continue to vision fallback (Stage 4)
                 }
             }
 

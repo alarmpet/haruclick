@@ -1,6 +1,7 @@
 import { supabase, invalidateCache } from './client';
 import { scheduleEventNotification } from '../notifications';
 import { classifyMerchant } from '../CategoryClassifier';
+import { validateCategory } from '../CategoryValidator';
 import { ScannedData, StorePaymentResult, BankTransactionResult, InvitationResult, GifticonResult, TransferResult, ReceiptResult, BillResult, SocialResult, AppointmentResult } from '../ai/OpenAIService';
 import { CATEGORY_MAP, CategoryGroupType } from '../../constants/categories';
 
@@ -233,19 +234,19 @@ export async function saveUnifiedEvent(
         } else if (data.type === 'STORE_PAYMENT') {
             const pay = data as StorePaymentResult;
             console.log('[saveUnifiedEvent] ledger 테이블 INSERT 시도...');
-            const category = pay.category || classifyMerchant(pay.merchant);
-            const categoryGroup = (pay as any).categoryGroup || determineCategoryGroup(category);
+            const rawCategory = pay.category || classifyMerchant(pay.merchant);
+            const validated = validateCategory(rawCategory, (pay as any).subCategory);
 
             const { error } = await supabase.from('ledger').insert({
                 user_id: userId,
                 transaction_date: toISODate(pay.date),
                 amount: pay.amount,
                 merchant_name: pay.merchant,
-                category: category,
-                sub_category: (pay as any).subCategory,
-                category_group: categoryGroup, // ✅ New field
+                category: validated.category,
+                sub_category: validated.subCategory,
+                category_group: validated.categoryGroup,
                 image_url: imageUrl,
-                memo: (pay as any).memo || `[자동분류] ${category}${(pay as any).subCategory ? ' > ' + (pay as any).subCategory : ''}`,
+                memo: (pay as any).memo || `[자동분류] ${validated.category}${validated.subCategory ? ' > ' + validated.subCategory : ''}`,
                 raw_text: JSON.stringify(data)
             });
             if (error) throw error;
@@ -257,17 +258,17 @@ export async function saveUnifiedEvent(
 
             if ((trans as any).isUtility) {
                 // 공과금/고정지출 -> Ledger로 저장
-                const category = (trans as any).category || (classifyMerchant(trans.targetName) === '기타' ? '고정지출' : classifyMerchant(trans.targetName));
-                const categoryGroup = (trans as any).categoryGroup || determineCategoryGroup(category);
+                const rawCategory = (trans as any).category || (classifyMerchant(trans.targetName) === '기타' ? '주거/통신/광열' : classifyMerchant(trans.targetName));
+                const validated = validateCategory(rawCategory, (trans as any).subCategory);
 
                 const { error } = await supabase.from('ledger').insert({
                     user_id: userId,
                     transaction_date: toISODate(trans.date),
                     amount: trans.amount,
                     merchant_name: trans.targetName,
-                    category: category,
-                    sub_category: (trans as any).subCategory,
-                    category_group: categoryGroup, // ✅ New field
+                    category: validated.category,
+                    sub_category: validated.subCategory,
+                    category_group: validated.categoryGroup,
                     image_url: imageUrl,
                     memo: `[공과금] ${trans.transactionType === 'deposit' ? '입금' : '출금'}`,
                     raw_text: JSON.stringify(data)

@@ -1,7 +1,7 @@
 import { Tabs, useRouter, useSegments } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { View, Text, Linking, Platform } from 'react-native';
 import { supabase } from '../services/supabase';
 import { Colors } from '../constants/Colors';
@@ -82,6 +82,7 @@ export default function RootLayout() {
     const segments = useSegments();
     const [session, setSession] = useState<any>(null);
     const [initialized, setInitialized] = useState(false);
+    const isTimedOut = useRef(false);
 
     useEffect(() => {
         if (loaded || error) {
@@ -115,11 +116,19 @@ export default function RootLayout() {
         };
         init();
 
-        // Auth Check with Timeout Safety (5s)
+        // Auth Check with Timeout Safety (10s)
+        const startTime = Date.now();
+
+
         const sessionTimeout = setTimeout(() => {
-            console.log('Session check timeout - proceeding without session');
-            setInitialized(true);
-        }, 5000);
+            if (!initialized && !isTimedOut.current) {
+                isTimedOut.current = true;
+                if (__DEV__) {
+                    console.warn(`Session check timeout (${Date.now() - startTime}ms) - proceeding without session`);
+                }
+                setInitialized(true);
+            }
+        }, 10000);
 
         supabase.auth.getSession().then(({ data: { session }, error }) => {
             clearTimeout(sessionTimeout);
@@ -135,12 +144,25 @@ export default function RootLayout() {
                     setSession(null);
                 }
             }
-            setSession(session);
-            setInitialized(true);
+            // 타임아웃이 이미 발생했더라도 세션이 있으면 업데이트 (결과적 일관성)
+            // 단, 불필요한 상태 업데이트를 막기 위해 initialized 체크
+            if (!isTimedOut.current) {
+                setSession(session);
+                setInitialized(true);
+            } else {
+                // 이미 타임아웃으로 진행된 상태에서 세션이 늦게 도착한 경우
+                // 세션만 업데이트하면 useEffect가 라우팅을 처리함
+                if (session) {
+                    if (__DEV__) console.log('Session arrived late after timeout, updating...');
+                    setSession(session);
+                }
+            }
         }).catch(e => {
             clearTimeout(sessionTimeout);
             console.log('Session check failed:', e);
-            setInitialized(true);
+            if (!isTimedOut.current) {
+                setInitialized(true);
+            }
         });
 
         const { data: { subscription: authListener } } = supabase.auth.onAuthStateChange(async (_event, session) => {
