@@ -1,51 +1,85 @@
-import { scheduleNotification } from './notifications';
-import { getEvents } from './supabase';
+import { scheduleEventNotification, scheduleGifticonAlerts } from './notifications';
+import { supabase } from './supabase-modules/client';
 
 export class ReciprocityEngine {
 
     // Check for gifticons expiring within 7 days
     static async checkExpiringGifticons() {
-        // TODO: Supabase 'gifticons' 테이블에서 실제 데이터 가져오기
-        console.log("Checking expiring gifticons... (현재 비활성화)");
+        console.log("[Reciprocity] Checking expiring gifticons...");
+        try {
+            const today = new Date();
+            // 7일 뒤 날짜
+            const nextWeek = new Date(today);
+            nextWeek.setDate(today.getDate() + 7);
+            const nextWeekStr = nextWeek.toISOString().split('T')[0];
+            const todayStr = today.toISOString().split('T')[0];
 
-        // 실제 구현 시:
-        // const { data } = await supabase.from('gifticons').select('*');
-        // const today = new Date();
-        // data?.forEach(gifticon => {
-        //     const expiry = new Date(gifticon.expiry_date);
-        //     const diffDays = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 3600 * 24));
-        //     if (diffDays <= 7 && diffDays >= 0) {
-        //         scheduleNotification(...);
-        //     }
-        // });
+            // 사용 가능하고 만료일이 오늘~7일 뒤인 것 조회
+            const { data, error } = await supabase
+                .from('gifticons')
+                .select('*')
+                .eq('status', 'available')
+                .gte('expiry_date', todayStr)
+                .lte('expiry_date', nextWeekStr);
+
+            if (error) throw error;
+
+            if (data && data.length > 0) {
+                console.log(`[Reciprocity] Found ${data.length} expiring gifticons.`);
+                await scheduleGifticonAlerts(data);
+            } else {
+                console.log("[Reciprocity] No expiring gifticons found.");
+            }
+        } catch (e) {
+            console.warn('[Reciprocity] Failed to check gifticons:', e);
+        }
     }
 
     // Check if we need to repay someone for an upcoming event
     static async checkReciprocityNeeds() {
-        console.log("Checking reciprocity needs...");
+        console.log("[Reciprocity] Checking reciprocity needs...");
 
         try {
-            // 실제 DB에서 다가오는 이벤트 가져오기
-            const events = await getEvents();
             const today = new Date();
             const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-            // 다가오는 이벤트 중 received 기록이 있는 사람 찾기
-            const upcomingEvents = events.filter(event => {
-                const eventDate = new Date(event.date);
-                return eventDate >= today && eventDate <= nextWeek && event.isReceived;
-            });
+            // 오늘 이후 ~ 7일 이내 행사 중 received(받은 내역)이 있는 경우 (즉, 내가 갚아야 할 수도 있는 건)
+            // 사실 'is_received' 플래그는 '내가 받은 돈'을 의미하므로, 이 행사는 '나의 행사'일 가능성이 높음.
+            // 하지만 '상호성' 관점에서는 '남의 행사'에 가야 할 때를 알려주는 것이 중요함.
+            // 남의 행사는 보통 'is_received'가 false임 (내가 돈을 낼 것이므로).
+            // 하지만 DB 구조상 'received' 필드가 명확지 않으므로, 
+            // 여기서는 '내가 참석해야 할 이벤트'를 찾는다고 가정하고 전체 이벤트를 훑거나
+            // event_type이 wedding/funeral 등인 것을 찾음.
 
-            // 실제 데이터가 있을 때만 알림
-            for (const event of upcomingEvents) {
-                await scheduleNotification(
-                    '마음을 전할 시간입니다 💝',
-                    `${event.name}님의 ${event.type === 'wedding' ? '결혼식' : '행사'}이 다가오네요. 축하의 마음을 전해보세요!`,
-                    5
-                );
+            // FIXME: 단순화를 위해 이번 주 모든 이벤트 알림 스케줄링 (중복은 notifications에서 처리)
+            const { data: events, error } = await supabase
+                .from('events')
+                .select('*')
+                .gte('event_date', today.toISOString().split('T')[0])
+                .lte('event_date', nextWeek.toISOString().split('T')[0]);
+
+            if (error) throw error;
+
+            if (events && events.length > 0) {
+                console.log(`[Reciprocity] Found ${events.length} upcoming events.`);
+                for (const event of events) {
+                    // 1일 전, 당일 알림
+                    await scheduleEventNotification(
+                        event.name || event.title || '일정',
+                        event.event_date,
+                        event.start_time || '09:00', // 기본값 09:00
+                        60 * 24 // 1일 전 (분 단위)
+                    );
+                    await scheduleEventNotification(
+                        event.name || event.title || '일정',
+                        event.event_date,
+                        event.start_time || '09:00',
+                        60 // 1시간 전
+                    );
+                }
             }
         } catch (error) {
-            console.error('ReciprocityEngine error:', error);
+            console.error('[Reciprocity] Error:', error);
         }
     }
 

@@ -139,6 +139,7 @@ export default function UniversalScannerScreen() {
 
             // Stage 2: Text Analysis (if sufficient text)
             if (textLength > 5) {
+                const stage2Start = Date.now();
                 console.log('[Scan] Stage 2: Analyzing text with OpenAI...');
                 console.log('[Scan] Raw OCR text:', normalizedText.substring(0, 300));
                 try {
@@ -148,6 +149,7 @@ export default function UniversalScannerScreen() {
 
                     const ocrScore = (typeof ocrResult === 'object' && ocrResult?.score) ? ocrResult.score : 0;
                     const results = await timeoutPromise(60000, analyzeImageText(preprocessed, { ocrScore }), 'OpenAI 텍스트 분석 시간 초과');
+                    console.log(`[Scan] Stage 2 Duration: ${Date.now() - stage2Start}ms`);
                     const valid = results.filter(r => r.type !== 'UNKNOWN');
 
                     // Vision Fallback: 금액 누락 감지 (Columnar OCR 대응)

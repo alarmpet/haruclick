@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { maskPIIInObject } from './piiMasking';
 
 export type OcrStage = 'ml_kit' | 'openai_text' | 'google_vision' | 'openai_vision';
 
@@ -97,26 +98,43 @@ export class OcrLogger {
                 text_length: entry.textLength,
                 error_message: entry.errorMessage,
                 image_size_kb: this.baseImageSizeKb,
-                processingTimeMs: entry.processingTimeMs || (currentTime - this.startTime), // Added this line based on the instruction's intent
+                processingTimeMs: entry.processingTimeMs || (currentTime - this.startTime),
             }
         };
 
-        this.logs.push(logItem);
+        // 🔒 PII Masking for Storage (DB에는 항상 마스킹된 데이터 저장)
+        const safeMetadata = maskPIIInObject(logItem.metadata);
+        const storageLogItem: OcrLogEntry = {
+            ...logItem,
+            metadata: safeMetadata
+        };
+
+        this.logs.push(storageLogItem);
         const icon = entry.success ? '✅' : '❌';
 
-        // 🛠️ Verbose Logging for Debugging
-        console.log(`\n========================================`);
-        console.log(`[OcrLogger] ${icon} Stage ${entry.stageOrder} (${entry.stage})`);
-        console.log(`----------------------------------------`);
-        console.log(`Status: ${entry.success ? 'Success' : 'Failed'}`);
-        if (entry.fallbackReason) console.log(`Reason: ${entry.fallbackReason}`);
-        if (entry.docTypePredicted) console.log(`Type: ${entry.docTypePredicted} (Conf: ${entry.confidence})`);
-        if (estimatedCost > 0) console.log(`Cost: $${estimatedCost.toFixed(5)}`);
+        // 🛠️ Verbose Logging
+        if (__DEV__) {
+            console.log(`\n========================================`);
+            console.log(`[OcrLogger] ${icon} Stage ${entry.stageOrder} (${entry.stage})`);
+            console.log(`----------------------------------------`);
+            console.log(`Status: ${entry.success ? 'Success' : 'Failed'}`);
+            if (entry.fallbackReason) console.log(`Reason: ${entry.fallbackReason}`);
+            if (entry.docTypePredicted) console.log(`Type: ${entry.docTypePredicted} (Conf: ${entry.confidence})`);
+            if (estimatedCost > 0) console.log(`Cost: $${estimatedCost.toFixed(5)}`);
 
-        if (entry.metadata) {
-            console.log(`Metadata:`, JSON.stringify(entry.metadata, null, 2));
+            // 개발 모드에서는 원본 메타데이터 출력 (디버깅용)
+            if (entry.metadata) {
+                console.log(`Metadata (Raw):`, JSON.stringify(logItem.metadata, null, 2));
+            }
+            console.log(`========================================\n`);
+        } else {
+            // 상용 모드에서는 마스킹된 로그만 출력하거나 생략
+            // 여기서는 마스킹된 로그 출력 (중요 에러 확인용)
+            if (!entry.success) {
+                console.log(`[OcrLogger] ${icon} Stage ${entry.stageOrder} Failed: ${entry.fallbackReason}`);
+                if (safeMetadata) console.log(`Metadata (Masked):`, JSON.stringify(safeMetadata));
+            }
         }
-        console.log(`========================================\n`);
     }
 
     // ===================================

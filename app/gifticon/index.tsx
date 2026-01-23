@@ -6,7 +6,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { Card } from '../../components/Card';
 import * as ImagePicker from 'expo-image-picker';
 import { getGifticons, GifticonItem } from '../../services/supabase';
-import { scheduleGifticonAlerts } from '../../services/notification';
+import { scheduleGifticonAlerts } from '../../services/notifications';
 
 export default function GifticonInboxScreen() {
     const router = useRouter();
@@ -74,8 +74,8 @@ export default function GifticonInboxScreen() {
     };
 
     const renderItem = ({ item }: { item: GifticonItem }) => {
-            const dDay = getDaysLeft(item.expiryDate);
-            const isUrgent = dDay === 'D-Day' || (dDay.startsWith('D-') && parseInt(dDay.replace('D-', ''), 10) <= 7);
+        const dDay = getDaysLeft(item.expiryDate);
+        const isUrgent = dDay === 'D-Day' || (dDay.startsWith('D-') && parseInt(dDay.replace('D-', ''), 10) <= 7);
 
         return (
             <Card style={styles.card}>

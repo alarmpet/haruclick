@@ -7,20 +7,35 @@ import { showError } from '../errorHandler';
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
+export const DB_CONNECTION_ERROR = "DB 연결 설정이 필요합니다.";
+let isConfigured = false;
+
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    console.error('Missing Supabase Environment Variables!');
-    throw new Error('Supabase URL or Key is missing. Check your .env file or EAS secrets.');
+    console.warn('[Supabase] Missing credentials. DB features will be disabled.');
+} else {
+    isConfigured = true;
+}
+
+export function checkSupabaseConfigured(): boolean {
+    if (!isConfigured) {
+        console.warn(`[Supabase] Operation skipped: ${DB_CONNECTION_ERROR}`);
+    }
+    return isConfigured;
 }
 
 // ✅ AsyncStorage를 사용하여 세션 지속성 활성화 (네이티브 빌드 필수)
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    auth: {
-        storage: AsyncStorage,
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInUrl: false, // React Native에서는 URL 감지 비활성화
-    },
-});
+// 환경변수가 없어도 앱이 터지지 않도록 더미 값으로 초기화하되, 실 사용 시 에러 발생
+export const supabase = createClient(
+    SUPABASE_URL || 'https://placeholder.supabase.co',
+    SUPABASE_ANON_KEY || 'placeholder',
+    {
+        auth: {
+            storage: AsyncStorage,
+            autoRefreshToken: true,
+            persistSession: true,
+            detectSessionInUrl: false, // React Native에서는 URL 감지 비활성화
+        },
+    });
 
 // ========================================
 // 🚀 In-Memory Cache for Performance

@@ -45,6 +45,13 @@ export interface TransferResult extends BaseAnalysisResult { type: 'TRANSFER'; a
 
 const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY ?? Constants.expoConfig?.extra?.EXPO_PUBLIC_OPENAI_API_KEY;
 
+// Session-level cache for few-shots
+const SESSION_SEED = Date.now() % 10000;
+let cachedFewShots: any[] | null = null;
+let cachedStaticSamples: any[] | null = null;
+let fewShotCacheTimestamp = 0;
+const FEWSHOT_CACHE_TTL_MS = 60000; // 1분
+
 const CATEGORY_KEYS = Object.keys(APP_CATEGORIES);
 
 const FEWSHOT_ALLOWED_KEYS = new Set<string>([
@@ -425,9 +432,16 @@ ${options.fewShotExamples}
 }
 
 const fetchDynamicFewShots = async (): Promise<any[]> => {
+    // 캐시 유효성 검사
+    const now = Date.now();
+    if (cachedFewShots && now - fewShotCacheTimestamp < FEWSHOT_CACHE_TTL_MS) {
+        console.log('[OpenAI] Using cached few-shots');
+        return cachedFewShots;
+    }
+
     console.time('[OpenAI] fetchDynamicFewShots');
+    const startTime = Date.now();
     try {
-        // DB 호출이 3초 이상 걸리면 포기하고 빈 배열 반환 (분석 자체를 막지 않기 위함)
         const dbPromise = supabase
             .from('approved_fewshots')
             .select('output_json')
@@ -436,19 +450,26 @@ const fetchDynamicFewShots = async (): Promise<any[]> => {
             .limit(15)
             .then(res => res.data?.map(d => d.output_json) || []);
 
-        const startTime = Date.now();
         const timeoutPromise = new Promise<any[]>((resolve) =>
             setTimeout(() => {
-                const elapsed = Date.now() - startTime;
-                console.warn(`[OpenAI] DB Fetch Timeout (${elapsed}ms) -> Fallback to static`);
+                console.warn(`[OpenAI] DB Fetch Timeout (5000ms) -> Fallback`);
                 resolve([]);
-            }, 3000)
+            }, 5000) // 3초 -> 5초로 증가
         );
 
-        return await Promise.race([dbPromise, timeoutPromise]);
+        const result = await Promise.race([dbPromise, timeoutPromise]);
+        const elapsed = Date.now() - startTime;
+        console.log(`[OpenAI] DB Fetch: ${elapsed}ms, Items: ${result.length}`);
+
+        if (result.length > 0) {
+            cachedFewShots = result;
+            fewShotCacheTimestamp = now;
+        }
+        // DB 실패 시 기존 캐시 유지
+        return result.length > 0 ? result : (cachedFewShots || []);
     } catch (e) {
         console.warn('Failed to fetch dynamic few-shots:', e);
-        return [];
+        return cachedFewShots || []; // 에러 시 기존 캐시 반환
     } finally {
         console.timeEnd('[OpenAI] fetchDynamicFewShots');
     }
@@ -459,15 +480,21 @@ const getFewShotPrompt = async (): Promise<string> => {
     const dynamic = await fetchDynamicFewShots();
 
     // 2. Get Static (Fill remaining slots up to 20 total)
-    // Filter out types that we already have dynamically (optional optimization, but let's just mix)
     const needed = Math.max(0, 20 - dynamic.length);
-    let staticSamples: any[] = [];
 
-    if (needed > 0) {
-        const shuffled = [...OCR_TEST_SAMPLES].sort(() => 0.5 - Math.random());
-        staticSamples = shuffled.slice(0, Math.min(needed, 10)); // Static은 최대 10개
+    // 정적 샘플은 세션 내 고정 (seed 기반)
+    if (!cachedStaticSamples) {
+        const seededRandom = (i: number) =>
+            ((SESSION_SEED + i * 9301 + 49297) % 233280) / 233280;
+        cachedStaticSamples = [...OCR_TEST_SAMPLES]
+            .map((item, i) => ({ item, sort: seededRandom(i) }))
+            .sort((a, b) => a.sort - b.sort)
+            .map(x => x.item)
+            .slice(0, 10);
+        console.log(`[OpenAI] Static samples fixed with seed: ${SESSION_SEED}`);
     }
 
+    const staticSamples = cachedStaticSamples.slice(0, needed);
     const combined = [...dynamic, ...staticSamples];
     const sanitized = sanitizeFewShotExamples(combined);
     return JSON.stringify(sanitized, null, 2);

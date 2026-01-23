@@ -6,7 +6,7 @@ import { View, Text, Linking, Platform } from 'react-native';
 import { supabase } from '../services/supabase';
 import { Colors } from '../constants/Colors';
 import { ReciprocityEngine } from '../services/ReciprocityEngine';
-import { registerForPushNotificationsAsync } from '../services/notification';
+import { registerForPushNotificationsAsync } from '../services/notifications';
 import * as Notifications from 'expo-notifications';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LoadingProvider } from '../components/LoadingOverlay';

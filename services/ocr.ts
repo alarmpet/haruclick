@@ -169,6 +169,46 @@ export function correctOcrTypos(text: string): string {
 }
 
 // ==========================================
+// 3.5 Columnar Layout Reconstruction (결제앱)
+// ==========================================
+export function reconstructColumnarLayout(text: string): string {
+    // 결제앱 컨텍스트가 아니면 패스
+    if (!detectPaymentAppContext(text)) return text;
+
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+    // 날짜+상품명 패턴: "01.18. 상주 백오이 3입 외 2개>"
+    const productPattern = /^(\d{2}\.\d{2}\.)\s*(.+?)>?$/;
+    // 금액 패턴: "-44,051" 또는 "44,051"
+    const amountPattern = /^-?\d{1,3}(,\d{3})*$/;
+
+    const products: { date: string; name: string }[] = [];
+    const amounts: string[] = [];
+    const others: string[] = [];
+
+    for (const line of lines) {
+        const pMatch = line.match(productPattern);
+        const aMatch = line.match(amountPattern);
+        if (pMatch) {
+            products.push({ date: pMatch[1], name: pMatch[2].replace(/>$/, '') });
+        } else if (aMatch) {
+            amounts.push(line);
+        } else {
+            others.push(line);
+        }
+    }
+
+    // 개수 일치 시 병합
+    if (products.length >= 2 && products.length === amounts.length) {
+        console.log(`[OCR] Columnar Merge: ${products.length} items`);
+        const merged = products.map((p, i) => `${p.date} ${p.name} ${amounts[i]}`);
+        return [...others.slice(0, 5), ...merged, ...others.slice(5)].join('\n');
+    }
+
+    return text;
+}
+
+// ==========================================
 // 4. ANCHOR-Based Relative Date Parsing
 // ==========================================
 
@@ -639,7 +679,7 @@ async function performAdvancedPreprocessing(uri: string): Promise<{ uri: string;
     }
 
     const initialText = filterByConfidence(initialResult, 0.4);
-    const initialClean = correctOcrTypos(initialText);
+    const initialClean = reconstructColumnarLayout(correctOcrTypos(initialText));
     const initialScore = scoreOcrText(initialClean);
 
     // If score is already great, return immediately
@@ -705,7 +745,7 @@ async function performAdvancedPreprocessing(uri: string): Promise<{ uri: string;
     // 4. Re-run OCR on improved image
     const finalResult = await TextRecognition.recognize(finalUri, TextRecognitionScript.KOREAN);
     const finalText = filterByConfidence(finalResult, 0.4);
-    const finalClean = correctOcrTypos(finalText);
+    const finalClean = reconstructColumnarLayout(correctOcrTypos(finalText));
     const finalScore = scoreOcrText(finalClean);
 
     console.log(`[OCR] Post-Process Result - Old Score: ${initialScore} -> New Score: ${finalScore}`);
@@ -828,7 +868,7 @@ export async function extractTextFromImage(uri: string, classification: ImageTyp
                 try {
                     const res = await TextRecognition.recognize(variantUri, TextRecognitionScript.KOREAN);
                     const rawText = filterByConfidence(res, 0.4);
-                    const processedText = correctOcrTypos(rawText);
+                    const processedText = reconstructColumnarLayout(correctOcrTypos(rawText));
                     const score = scoreOcrText(processedText);
 
                     if (score > bestScore) {
@@ -881,7 +921,7 @@ export async function extractTextFromImage(uri: string, classification: ImageTyp
                                 const visionText = await extractTextWithGoogleVision(uri);
                                 const visionScore = scoreOcrText(visionText);
                                 if (visionScore > bestScore) {
-                                    bestText = correctOcrTypos(visionText);
+                                    bestText = reconstructColumnarLayout(correctOcrTypos(visionText));
                                     bestScore = visionScore;
                                 }
                             } catch (e) {
@@ -922,7 +962,7 @@ export async function extractTextFromImage(uri: string, classification: ImageTyp
                 const visionText = await extractTextWithGoogleVision(uri);
                 const visionScore = scoreOcrText(visionText);
                 if (visionScore > bestScore) {
-                    bestText = correctOcrTypos(visionText);
+                    bestText = reconstructColumnarLayout(correctOcrTypos(visionText));
                     bestScore = visionScore;
                     logger?.logGoogleVision(true, bestText.length);
                 }
