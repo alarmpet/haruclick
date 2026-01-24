@@ -145,29 +145,57 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
     );
 }
 
-export async function getEvents(): Promise<EventRecord[]> {
+export async function getEvents(year?: number, month?: number): Promise<EventRecord[]> {
+    let startDate: string | undefined;
+    let endDate: string | undefined;
+
+    if (year && month) {
+        const start = new Date(year, month - 1, 1);
+        const end = new Date(year, month, 1);
+        startDate = start.toISOString().split('T')[0];
+        endDate = end.toISOString().split('T')[0];
+    }
+
     // 1. Fetch Events
-    console.log('[getEvents] Fetching events table...');
-    const { data: events, error: eventError } = await supabase
+    console.log('[getEvents] Fetching events table...', { year, month });
+    let eventsQuery = supabase
         .from('events')
-        .select('*')
+        .select('id, category, type, name, relation, event_date, amount, is_received, memo, is_completed, start_time, end_time, location')
         .order('event_date', { ascending: true });
+
+    if (startDate && endDate) {
+        eventsQuery = eventsQuery.gte('event_date', startDate).lt('event_date', endDate);
+    }
+
+    const { data: events, error: eventError } = await eventsQuery;
     console.log('[getEvents] Events fetched:', events?.length);
 
     // 2. Fetch Ledger
     console.log('[getEvents] Fetching ledger table...');
-    const { data: ledger, error: ledgerError } = await supabase
+    let ledgerQuery = supabase
         .from('ledger')
-        .select('*')
+        .select('id, category, merchant_name, transaction_date, amount, memo')
         .order('transaction_date', { ascending: true });
+
+    if (startDate && endDate) {
+        ledgerQuery = ledgerQuery.gte('transaction_date', startDate).lt('transaction_date', endDate);
+    }
+
+    const { data: ledger, error: ledgerError } = await ledgerQuery;
     console.log('[getEvents] Ledger fetched:', ledger?.length);
 
     // 3. Fetch Bank Transactions
     console.log('[getEvents] Fetching bank_transactions table...');
-    const { data: bank, error: bankError } = await supabase
+    let bankQuery = supabase
         .from('bank_transactions')
-        .select('*')
+        .select('id, transaction_type, sender_name, receiver_name, category, transaction_date, amount, memo')
         .order('transaction_date', { ascending: true });
+
+    if (startDate && endDate) {
+        bankQuery = bankQuery.gte('transaction_date', startDate).lt('transaction_date', endDate);
+    }
+
+    const { data: bank, error: bankError } = await bankQuery;
     console.log('[getEvents] Bank fetched:', bank?.length);
 
     if (eventError) console.error('Error fetching events:', eventError);

@@ -1,19 +1,30 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated, Easing, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated, Easing, Pressable, RefreshControl } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Colors } from '../constants/Colors';
 import { useRouter } from 'expo-router';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase, fetchUserStats, getTodayEvents, getUpcomingEvents, EventRecord } from '../services/supabase';
+import { supabase, getTodayEvents, getUpcomingEvents, fetchPeriodStats, EventRecord } from '../services/supabase';
 import { getEventEmoji } from '../services/EmojiService';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { useTheme } from '../contexts/ThemeContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function Home() {
     const router = useRouter();
-    const [stats, setStats] = useState({ totalGiven: 0, totalReceived: 0, pendingGiven: 0, diff: 0 });
+    const { colors, isDark } = useTheme();
+    const insets = useSafeAreaInsets();
+    const [stats, setStats] = useState({
+        totalGiven: 0,
+        totalReceived: 0,
+        pendingGiven: 0,
+        diff: 0,
+        spendingDiff: 0 // Added for vs Last Month
+    });
     const [todayEvents, setTodayEvents] = useState<EventRecord[]>([]);
     const [upcomingEvents, setUpcomingEvents] = useState<EventRecord[]>([]);
+    const [refreshing, setRefreshing] = useState(false);
 
     // Ripple Animation (2개만 사용 - 잔잔하게)
     const ripple1 = useRef(new Animated.Value(0)).current;
@@ -56,8 +67,8 @@ export default function Home() {
         const diffTime = eventDate.getTime() - today.getTime();
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
         if (diffDays === 0) return 'D-Day';
-        if (diffDays < 0) return `D+${Math.abs(diffDays)}`;
-        return `D-${diffDays}`;
+        if (diffDays < 0) return `D + ${Math.abs(diffDays)} `;
+        return `D - ${diffDays} `;
     };
 
     useEffect(() => {
@@ -92,26 +103,74 @@ export default function Home() {
         };
     }, []);
 
+    const fetchEvents = async () => {
+        try {
+            const [todayData, upcomingData] = await Promise.all([
+                getTodayEvents(),
+                getUpcomingEvents(5)
+            ]);
+            setTodayEvents(todayData);
+            setUpcomingEvents(upcomingData);
+        } catch (error) {
+            console.error('Failed to load events:', error);
+        }
+    };
+
+    const fetchDashboardStats = async () => {
+        try {
+            // Calculate Dates
+            const now = new Date();
+            const currentYear = now.getFullYear();
+            const currentMonth = now.getMonth() + 1;
+
+            // This Month
+            const thisMonthStart = `${currentYear} -${String(currentMonth).padStart(2, '0')}-01`;
+            const nextMonthDate = new Date(currentYear, currentMonth, 1); // Month is 0-indexed for Date constructor
+            const thisMonthEnd = `${nextMonthDate.getFullYear()} -${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}-01`;
+
+            // Last Month
+            const lastMonthDate = new Date(currentYear, currentMonth - 2, 1); // currentMonth is 1-indexed, so currentMonth-2 gives previous month's 0-indexed value
+            const lastMonthStart = `${lastMonthDate.getFullYear()} -${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}-01`;
+            // Last Month End is This Month Start
+            const lastMonthEnd = thisMonthStart;
+
+            console.log('[Dashboard] Fetching stats...', { thisMonthStart, thisMonthEnd, lastMonthStart, lastMonthEnd });
+
+            // Fetch Parallel
+            const [thisMonthStats, lastMonthStats] = await Promise.all([
+                fetchPeriodStats(thisMonthStart, thisMonthEnd),
+                fetchPeriodStats(lastMonthStart, lastMonthEnd)
+            ]);
+
+            const spendingDiff = thisMonthStats.totalGiven - lastMonthStats.totalGiven;
+
+            setStats({
+                ...thisMonthStats,
+                spendingDiff
+            });
+        } catch (error) {
+            console.error('Error fetching dashboard stats:', error);
+        }
+    };
+
+    const loadHomeData = async () => {
+        await Promise.all([
+            fetchDashboardStats(),
+            fetchEvents()
+        ]);
+    };
+
     useFocusEffect(
         useCallback(() => {
-            const loadHomeData = async () => {
-                try {
-                    const [statsData, todayData, upcomingData] = await Promise.all([
-                        fetchUserStats(),
-                        getTodayEvents(),
-                        getUpcomingEvents(5)
-                    ]);
-
-                    setStats(statsData);
-                    setTodayEvents(todayData);
-                    setUpcomingEvents(upcomingData);
-                } catch (error) {
-                    console.error('Failed to load home data:', error);
-                }
-            };
             loadHomeData();
         }, [])
     );
+
+    const onRefresh = async () => {
+        setRefreshing(true);
+        await loadHomeData();
+        setRefreshing(false);
+    };
 
     const getRippleStyle = useCallback((anim: Animated.Value) => ({
         transform: [
@@ -130,24 +189,30 @@ export default function Home() {
 
     return (
         <>
-            <StatusBar style="light" />
-            <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+            <StatusBar style={isDark ? "light" : "dark"} />
+            <ScrollView
+                style={[styles.container, { backgroundColor: colors.background }]}
+                contentContainerStyle={[styles.content, { paddingTop: insets.top + 20 }]}
+                refreshControl={
+                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+                }
+            >
 
                 {/* Slogan */}
                 <View style={styles.sloganContainer}>
-                    <Text style={styles.sloganText}>
+                    <Text style={[styles.sloganText, { color: colors.subText }]}>
                         복잡하고 번거로운 기록은 그만,
                     </Text>
-                    <Text style={styles.sloganText}>
-                        <Text style={styles.sloganHighlight}>클릭만으로</Text> 하루를 기록하세요
+                    <Text style={[styles.sloganText, { color: colors.subText }]}>
+                        <Text style={[styles.sloganHighlight, { color: colors.orange }]}>클릭만으로</Text> 하루를 기록하세요
                     </Text>
                 </View>
 
                 {/* Hero Scan Button with Ripple */}
                 <View style={styles.heroContainer}>
                     {/* Ripple Effects (2개 - 잔잔하게) */}
-                    <Animated.View style={[styles.ripple, getRippleStyle(ripple1)]} />
-                    <Animated.View style={[styles.ripple, getRippleStyle(ripple2)]} />
+                    <Animated.View style={[styles.ripple, getRippleStyle(ripple1), { backgroundColor: colors.orange }]} />
+                    <Animated.View style={[styles.ripple, getRippleStyle(ripple2), { backgroundColor: colors.orange }]} />
 
                     {/* Main Button with Scale Animation */}
                     <Pressable
@@ -155,8 +220,8 @@ export default function Home() {
                         onPressOut={handlePressOut}
                         onPress={handleScanPress}
                     >
-                        <Animated.View style={[styles.heroButton, { transform: [{ scale: scaleValue }] }]}>
-                            <Ionicons name="camera" size={48} color={Colors.white} />
+                        <Animated.View style={[styles.heroButton, { transform: [{ scale: scaleValue }], backgroundColor: colors.orange, shadowColor: colors.orange }]}>
+                            <Ionicons name="camera" size={48} color="white" />
                             <Text style={styles.heroText}>지금 사진을 찍거나</Text>
                             <Text style={styles.heroText}>이미지를 올려보세요</Text>
                         </Animated.View>
@@ -169,110 +234,123 @@ export default function Home() {
                         style={styles.quickLink}
                         onPress={() => router.push({ pathname: '/calendar', params: { refresh: Date.now(), date: '' } })} // Quick link도 리프레시
                     >
-                        <Ionicons name="calendar-outline" size={20} color={Colors.subText} />
-                        <Text style={styles.quickLinkText}>캘린더</Text>
+                        <Ionicons name="calendar-outline" size={20} color={colors.subText} />
+                        <Text style={[styles.quickLinkText, { color: colors.subText }]}>캘린더</Text>
                     </TouchableOpacity>
-                    <View style={styles.quickDivider} />
+                    <View style={[styles.quickDivider, { backgroundColor: colors.border }]} />
                     <TouchableOpacity
                         style={styles.quickLink}
                         onPress={() => router.push('/stats')}
                     >
-                        <Ionicons name="stats-chart-outline" size={20} color={Colors.subText} />
-                        <Text style={styles.quickLinkText}>통계</Text>
+                        <Ionicons name="stats-chart-outline" size={20} color={colors.subText} />
+                        <Text style={[styles.quickLinkText, { color: colors.subText }]}>통계</Text>
                     </TouchableOpacity>
                 </View>
 
                 {/* Monthly Report Card */}
                 <TouchableOpacity
-                    style={styles.reportCard}
+                    style={[styles.reportCard, { backgroundColor: colors.card }]}
                     onPress={() => router.push('/history')}
                     activeOpacity={0.8}
                 >
                     <View style={styles.reportHeader}>
-                        <Text style={styles.reportTitle}>이번 달</Text>
-                        <Ionicons name="chevron-forward" size={18} color={Colors.subText} />
+                        <View style={{ gap: 4 }}>
+                            <Text style={[styles.reportTitle, { color: colors.text }]}>{new Date().getFullYear()}년 {new Date().getMonth() + 1}월 지출</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
+                                <Text style={[styles.statValueOut, { color: colors.danger }]}>
+                                    -{stats.totalGiven.toLocaleString()}원
+                                </Text>
+                                {stats.pendingGiven > 0 && (
+                                    <Text style={{ fontSize: 13, color: colors.subText }}>
+                                        (송금 예정 {stats.pendingGiven.toLocaleString()}원)
+                                    </Text>
+                                )}
+                            </View>
+                            <Text style={[styles.pendingText, { color: stats.spendingDiff > 0 ? colors.danger : colors.success }]}>
+                                {stats.spendingDiff > 0 ? '▲' : '▼'} 지난달 대비 {Math.abs(stats.spendingDiff).toLocaleString()}원 {stats.spendingDiff > 0 ? '더 씀' : '덜 씀'}
+                            </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={18} color={colors.subText} />
                     </View>
 
                     <View style={styles.statsRow}>
                         <View style={styles.statItem}>
-                            <Text style={styles.statLabel}>지출</Text>
-                            <Text style={styles.statValueOut}>-{stats.totalGiven.toLocaleString()}</Text>
-                            {stats.pendingGiven > 0 && (
-                                <Text style={styles.pendingText}>
-                                    지출예정 {stats.pendingGiven.toLocaleString()}원
-                                </Text>
-                            )}
-                        </View>
-                        <View style={styles.statItem}>
-                            <Text style={styles.statLabel}>수입</Text>
-                            <Text style={styles.statValueIn}>+{stats.totalReceived.toLocaleString()}</Text>
+                            <Text style={[styles.statLabel, { color: colors.subText }]}>수입</Text>
+                            <Text style={[styles.statValueIn, { color: colors.success }]}>+{stats.totalReceived.toLocaleString()}</Text>
                         </View>
                     </View>
                 </TouchableOpacity>
 
                 {/* Today's Timeline */}
-                {todayEvents.length > 0 && (
-                    <View style={styles.timelineSection}>
-                        <Text style={styles.timelineTitle}>오늘의 기록</Text>
-                        {todayEvents.slice(0, 3).map((event) => (
+                <View style={[styles.timelineSection, { backgroundColor: colors.card }]}>
+                    <Text style={[styles.timelineTitle, { color: colors.subText }]}>오늘의 기록</Text>
+                    {todayEvents.length > 0 ? (
+                        todayEvents.slice(0, 3).map((event) => (
                             <TouchableOpacity
                                 key={event.id}
                                 style={[
                                     styles.timelineItem,
-                                    event.source === 'events' && styles.timelineItemHighlight
+                                    event.source === 'events' && { backgroundColor: isDark ? 'rgba(255, 126, 54, 0.1)' : '#FFF7ED' }
                                 ]}
                                 onPress={() => router.push({ pathname: '/calendar', params: { date: event.date?.split('T')[0] } })}
                                 activeOpacity={0.7}
                             >
                                 {event.source === 'events' ? (
-                                    <View style={styles.timelineIconContainer}>
+                                    <View style={[styles.timelineIconContainer, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0,0,0,0.05)' }]}>
                                         <Text style={{ fontSize: 12 }}>
                                             {getEventEmoji(event)}
                                         </Text>
                                     </View>
                                 ) : (
-                                    <View style={[styles.timelineDot, event.isReceived ? styles.dotIn : styles.dotOut]} />
+                                    <View style={[styles.timelineDot, event.isReceived ? { backgroundColor: colors.success } : { backgroundColor: colors.danger }]} />
                                 )}
                                 <Text
                                     style={[
                                         styles.timelineName,
-                                        event.source === 'events' && styles.timelineNameHighlight
+                                        { color: colors.text },
+                                        event.source === 'events' && { color: colors.orange, fontFamily: 'Pretendard-Bold' }
                                     ]}
                                     numberOfLines={1}
                                 >
                                     {event.name || '내역'}
                                 </Text>
                                 {event.amount && event.amount > 0 ? (
-                                    <Text style={[styles.timelineAmount, event.isReceived ? styles.amountIn : styles.amountOut]}>
+                                    <Text style={[styles.timelineAmount, event.isReceived ? { color: colors.success } : { color: colors.danger }]}>
                                         {event.isReceived ? '+' : '-'}{event.amount.toLocaleString()}
                                     </Text>
                                 ) : (
                                     event.source === 'events' && (
-                                        <Text style={styles.timelineTime}>
+                                        <Text style={[styles.timelineTime, { color: colors.subText }]}>
                                             {event.startTime ? event.startTime.substring(0, 5) : '하루 종일'}
                                         </Text>
                                     )
                                 )}
                             </TouchableOpacity>
-                        ))}
-                    </View>
-                )}
+                        ))
+                    ) : (
+                        <View style={styles.emptyTimeline}>
+                            <Text style={[styles.emptyTimelineText, { color: colors.subText }]}>
+                                오늘 예정된 일정이 없습니다. 편안한 하루 보내세요 ☕️
+                            </Text>
+                        </View>
+                    )}
+                </View>
 
                 {/* Upcoming Events */}
-                <View style={styles.upcomingSection}>
+                <View style={[styles.upcomingSection, { backgroundColor: colors.card }]}>
                     <View style={styles.upcomingHeader}>
-                        <Text style={styles.upcomingTitle}>📅 다가오는 일정</Text>
+                        <Text style={[styles.upcomingTitle, { color: colors.text }]}>📅 다가오는 일정</Text>
                         <TouchableOpacity onPress={() => router.push({ pathname: '/calendar', params: { refresh: Date.now(), date: '' } })}>
-                            <Text style={styles.upcomingMore}>전체보기</Text>
+                            <Text style={[styles.upcomingMore, { color: colors.orange }]}>전체보기</Text>
                         </TouchableOpacity>
                     </View>
                     {upcomingEvents.length === 0 ? (
                         <View style={styles.emptyUpcoming}>
-                            <View style={styles.emptyIconContainer}>
-                                <Ionicons name="calendar-outline" size={40} color="rgba(255,255,255,0.25)" />
+                            <View style={[styles.emptyIconContainer, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#F1F5F9' }]}>
+                                <Ionicons name="calendar-outline" size={40} color={colors.subText} />
                             </View>
-                            <Text style={styles.emptyTitle}>아직 예정된 일정이 없어요</Text>
-                            <Text style={styles.emptyHint}>
+                            <Text style={[styles.emptyTitle, { color: colors.text }]}>아직 예정된 일정이 없어요</Text>
+                            <Text style={[styles.emptyHint, { color: colors.subText }]}>
                                 청첩장이나 문자를 스캔하면{'\n'}자동으로 일정이 등록됩니다
                             </Text>
                             <TouchableOpacity
@@ -290,18 +368,18 @@ export default function Home() {
                             return (
                                 <TouchableOpacity
                                     key={event.id}
-                                    style={styles.upcomingItem}
+                                    style={[styles.upcomingItem, { borderBottomColor: colors.border }]}
                                     onPress={() => router.push({ pathname: '/calendar', params: { date: event.date.split('T')[0] } })}
                                     activeOpacity={0.7}
                                 >
                                     <View style={styles.upcomingLeft}>
                                         <Text style={styles.upcomingType}>{getEventEmoji(event)}</Text>
                                         <View>
-                                            <Text style={styles.upcomingName}>{event.name || '일정'}</Text>
-                                            <Text style={styles.upcomingDate}>{event.date?.split('T')[0]}{event.relation ? ` · ${event.relation}` : ''}</Text>
+                                            <Text style={[styles.upcomingName, { color: colors.text }]}>{event.name || '일정'}</Text>
+                                            <Text style={[styles.upcomingDate, { color: colors.subText }]}>{event.date?.split('T')[0]}{event.relation ? ` · ${event.relation} ` : ''}</Text>
                                         </View>
                                     </View>
-                                    <Text style={[styles.upcomingDDay, dDay === 'D-Day' && styles.dDayToday]}>{dDay}</Text>
+                                    <Text style={[styles.upcomingDDay, dDay === 'D-Day' && { color: colors.orange }]}>{dDay}</Text>
                                 </TouchableOpacity>
                             );
                         })
@@ -316,10 +394,8 @@ export default function Home() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: Colors.navy,
     },
     content: {
-        paddingTop: 80,
         paddingBottom: 100,
         alignItems: 'center',
     },
@@ -504,27 +580,23 @@ const styles = StyleSheet.create({
         borderRadius: 4,
         marginRight: 12,
     },
-    dotOut: {
-        backgroundColor: '#F87171',
-    },
-    dotIn: {
-        backgroundColor: '#4ADE80',
-    },
     timelineName: {
         flex: 1,
         fontFamily: 'Pretendard-Medium',
         fontSize: 14,
-        color: Colors.white,
     },
     timelineAmount: {
         fontFamily: 'Pretendard-Bold',
         fontSize: 14,
     },
-    amountOut: {
-        color: '#F87171',
+    emptyTimeline: {
+        paddingVertical: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
-    amountIn: {
-        color: '#4ADE80',
+    emptyTimelineText: {
+        fontFamily: 'Pretendard-Medium',
+        fontSize: 14,
     },
 
     // Upcoming Events

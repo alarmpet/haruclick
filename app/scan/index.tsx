@@ -7,12 +7,16 @@ import { Colors } from '../../constants/Colors';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { analyzeInvitation, AnalysisResult } from '../../services/ai/AnalysisEngine';
 import { useLoading } from '../../components/LoadingOverlay';
+import { useTheme } from '../../contexts/ThemeContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const RELATIONS = ['가족', '친한 친구', '직장 동료', '대학 동기', '지인', '거래처'];
 
 export default function ScanScreen() {
     const router = useRouter();
     const loading = useLoading();
+    const { colors, isDark } = useTheme();
+    const insets = useSafeAreaInsets();
     const [image, setImage] = useState<string | null>(null);
     const [selectedRelation, setSelectedRelation] = useState<string | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -55,55 +59,73 @@ export default function ScanScreen() {
     };
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.background }]}>
             <ScrollView contentContainerStyle={styles.content}>
-                <Text style={styles.headerTitle}>청첩장 분석</Text>
-                <Text style={styles.headerSubtitle}>청첩장 사진을 올리고{'\n'}관계만 알려주세요.</Text>
+                <Text style={[styles.headerTitle, { color: colors.text }]}>청첩장 분석</Text>
+                <Text style={[styles.headerSubtitle, { color: colors.subText }]}>청첩장 사진을 올리고{'\n'}관계만 알려주세요.</Text>
 
                 {/* Image Picker Area */}
-                <TouchableOpacity style={styles.imageContainer} onPress={pickImage} activeOpacity={0.9}>
+                <TouchableOpacity
+                    style={[styles.imageContainer, { backgroundColor: colors.card, borderColor: colors.border }]}
+                    onPress={pickImage}
+                    activeOpacity={0.9}
+                    accessibilityLabel={image ? "이미지 선택됨" : "사진 선택하기"}
+                    accessibilityRole="button"
+                >
                     {image ? (
                         <Image source={{ uri: image }} style={styles.image} contentFit="contain" />
                     ) : (
                         <View style={styles.placeholder}>
-                            <Ionicons name="camera-outline" size={48} color={Colors.subText} />
-                            <Text style={styles.placeholderText}>청첩장 사진 선택하기</Text>
+                            <Ionicons name="camera-outline" size={48} color={colors.subText} />
+                            <Text style={[styles.placeholderText, { color: colors.subText }]}>청첩장 사진 선택하기</Text>
                         </View>
                     )}
                 </TouchableOpacity>
 
                 {/* Relation Selector */}
-                <Text style={styles.sectionTitle}>관계 선택</Text>
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>관계 선택</Text>
                 <View style={styles.relationGrid}>
-                    {RELATIONS.map((rel) => (
-                        <TouchableOpacity
-                            key={rel}
-                            style={[
-                                styles.relationChip,
-                                selectedRelation === rel && styles.selectedChip
-                            ]}
-                            onPress={() => setSelectedRelation(rel)}
-                        >
-                            <Text style={[
-                                styles.chipText,
-                                selectedRelation === rel && styles.selectedChipText
-                            ]}>{rel}</Text>
-                        </TouchableOpacity>
-                    ))}
+                    {RELATIONS.map((rel) => {
+                        const isSelected = selectedRelation === rel;
+                        return (
+                            <TouchableOpacity
+                                key={rel}
+                                style={[
+                                    styles.relationChip,
+                                    { backgroundColor: colors.card, borderColor: colors.border },
+                                    isSelected && { backgroundColor: isDark ? colors.primary : colors.navy, borderColor: isDark ? colors.primary : colors.navy }
+                                ]}
+                                onPress={() => setSelectedRelation(rel)}
+                                accessibilityRole="radio"
+                                accessibilityState={{ selected: isSelected }}
+                                accessibilityLabel={`${rel} 선택`}
+                            >
+                                {isSelected && <Ionicons name="checkmark" size={16} color="white" style={{ marginRight: 4 }} />}
+                                <Text style={[
+                                    styles.chipText,
+                                    { color: colors.subText },
+                                    isSelected && { color: 'white', fontFamily: 'Pretendard-Bold' }
+                                ]}>{rel}</Text>
+                            </TouchableOpacity>
+                        );
+                    })}
                 </View>
             </ScrollView>
 
             {/* Bottom Action */}
-            <View style={styles.footer}>
+            <View style={[styles.footer, { backgroundColor: colors.background, paddingBottom: Math.max(insets.bottom, 24) }]}>
                 <TouchableOpacity
                     style={[
                         styles.analyzeButton,
-                        (!image || !selectedRelation) && styles.disabledButton
+                        { backgroundColor: colors.primary },
+                        (!image || !selectedRelation) && { backgroundColor: isDark ? '#555' : '#FFD4B5' }
                     ]}
                     onPress={handleAnalyze}
                     disabled={!image || !selectedRelation || isAnalyzing}
+                    accessibilityLabel="AI 분석 시작하기"
+                    accessibilityRole="button"
                 >
-                    <Text style={styles.buttonText}>AI 분석 시작하기</Text>
+                    <Text style={[styles.buttonText, { color: isDark && (!image || !selectedRelation) ? '#888' : 'white' }]}>AI 분석 시작하기</Text>
                 </TouchableOpacity>
             </View>
         </View>
@@ -113,7 +135,6 @@ export default function ScanScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: Colors.background,
     },
     content: {
         padding: 24,
@@ -121,26 +142,22 @@ const styles = StyleSheet.create({
     headerTitle: {
         fontFamily: 'Pretendard-Bold',
         fontSize: 24,
-        color: Colors.text,
         marginTop: 20,
         marginBottom: 8,
     },
     headerSubtitle: {
         fontFamily: 'Pretendard-Medium',
         fontSize: 16,
-        color: Colors.subText,
         lineHeight: 24,
         marginBottom: 32,
     },
     imageContainer: {
         width: '100%',
         height: 300,
-        backgroundColor: Colors.white,
         borderRadius: 20,
         marginBottom: 32,
         overflow: 'hidden',
         borderWidth: 1,
-        borderColor: Colors.border,
         justifyContent: 'center',
         alignItems: 'center',
         borderStyle: 'dashed',
@@ -148,7 +165,6 @@ const styles = StyleSheet.create({
     image: {
         width: '100%',
         height: '100%',
-        backgroundColor: Colors.white,
     },
     placeholder: {
         alignItems: 'center',
@@ -156,13 +172,11 @@ const styles = StyleSheet.create({
     },
     placeholderText: {
         fontFamily: 'Pretendard-Medium',
-        color: Colors.subText,
         fontSize: 14,
     },
     sectionTitle: {
         fontFamily: 'Pretendard-Bold',
         fontSize: 18,
-        color: Colors.text,
         marginBottom: 16,
     },
     relationGrid: {
@@ -171,44 +185,29 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     relationChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
         paddingHorizontal: 20,
         paddingVertical: 12,
         borderRadius: 100,
-        backgroundColor: Colors.white,
         borderWidth: 1,
-        borderColor: Colors.border,
-    },
-    selectedChip: {
-        backgroundColor: Colors.navy,
-        borderColor: Colors.navy,
     },
     chipText: {
         fontFamily: 'Pretendard-Medium',
         fontSize: 14,
-        color: Colors.subText,
-    },
-    selectedChipText: {
-        color: Colors.white,
-        fontFamily: 'Pretendard-Bold',
     },
     footer: {
         padding: 24,
-        backgroundColor: Colors.white,
         borderTopWidth: 1,
-        borderTopColor: Colors.border,
+        borderTopColor: 'rgba(0,0,0,0.05)',
     },
     analyzeButton: {
-        backgroundColor: Colors.orange,
         paddingVertical: 18,
         borderRadius: 16,
         alignItems: 'center',
     },
-    disabledButton: {
-        backgroundColor: '#FFD4B5',
-    },
     buttonText: {
         fontFamily: 'Pretendard-Bold',
         fontSize: 18,
-        color: Colors.white,
     },
 });

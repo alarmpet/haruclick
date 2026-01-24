@@ -47,7 +47,7 @@ LocaleConfig.defaultLocale = 'kr';
 export default function CalendarScreen() {
     const router = useRouter();
     const navigation = useNavigation();
-    const { colors } = useTheme();
+    const { colors, isDark } = useTheme();
     const [selectedDate, setSelectedDate] = useState('');
     const [detailModalVisible, setDetailModalVisible] = useState(false);
     const [selectedEvent, setSelectedEvent] = useState<EventRecord | null>(null);
@@ -455,7 +455,13 @@ export default function CalendarScreen() {
 
         return (
             <TouchableOpacity
-                style={styles.dayCell}
+                style={[
+                    styles.dayCell,
+                    {
+                        borderRightColor: colors.border,
+                        borderBottomColor: colors.border
+                    }
+                ]}
                 onPress={() => handleDayPress(date)}
                 activeOpacity={0.7}
             >
@@ -468,6 +474,7 @@ export default function CalendarScreen() {
                     ]}>
                         <Text style={[
                             styles.dayText,
+                            { color: colors.text },
                             isToday && styles.todayText,
                             isSelected && styles.selectedText,
                             isDisabled && styles.disabledText,
@@ -478,7 +485,7 @@ export default function CalendarScreen() {
                     </View>
 
                     {/* 음력/명절 표시 */}
-                    <Text style={[lunarInfo.isHoliday ? styles.holidayText : styles.lunarText, { marginLeft: 4 }]}>
+                    <Text style={[lunarInfo.isHoliday ? styles.holidayText : styles.lunarText, { marginLeft: 4, color: lunarInfo.isHoliday ? '#EF4444' : colors.subText }]}>
                         {lunarInfo.holidayName || lunarInfo.lunarDate}
                     </Text>
                 </View>
@@ -509,14 +516,14 @@ export default function CalendarScreen() {
                                         borderLeftWidth: 3
                                     }
                                 ]}>
-                                    <Text style={[styles.eventTagText, { color: '#ddd' }]} numberOfLines={1}>
+                                    <Text style={[styles.eventTagText, { color: isDark ? '#ddd' : colors.text }]} numberOfLines={1}>
                                         {event.name}
                                     </Text>
                                 </View>
                             );
                         })}
                         {dayEvents.length > 5 && (
-                            <Text style={styles.moreText}>+{dayEvents.length - 5} more</Text>
+                            <Text style={[styles.moreText, { color: colors.subText }]}>+{dayEvents.length - 5} more</Text>
                         )}
                     </View>
                 )}
@@ -700,35 +707,35 @@ export default function CalendarScreen() {
     };
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.background }]}>
             <Stack.Screen options={{ headerShown: false }} />
 
             {/* 커스텀 헤더 */}
-            <View style={styles.header}>
+            <View style={[styles.header, { backgroundColor: colors.background }]}>
                 <View style={styles.headerLeft}>
                     <TouchableOpacity onPress={() => navigation.dispatch(DrawerActions.toggleDrawer())}>
-                        <Ionicons name="menu" size={24} color="#fff" />
+                        <Ionicons name="menu" size={24} color={colors.text} />
                     </TouchableOpacity>
                     <TouchableOpacity
                         onPress={() => setMonthPickerVisible(true)}
                         style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
                     >
-                        <Text style={styles.monthText}>
+                        <Text style={[styles.monthText, { color: colors.text }]}>
                             {currentDate.split('-')[1]}월
                         </Text>
-                        <Ionicons name="chevron-down" size={16} color="#fff" />
+                        <Ionicons name="chevron-down" size={16} color={colors.text} />
                     </TouchableOpacity>
                 </View>
 
                 <View style={styles.headerRight}>
                     <TouchableOpacity style={styles.headerIcon} onPress={() => { setSearchQuery(''); setSearchResults([]); setSearchModalVisible(true); }}>
-                        <Ionicons name="search" size={22} color="#fff" />
+                        <Ionicons name="search" size={22} color={colors.text} />
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.headerIcon} onPress={() => setViewModeModalVisible(true)}>
-                        <Ionicons name="calendar-outline" size={22} color="#fff" />
+                        <Ionicons name="calendar-outline" size={22} color={colors.text} />
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.headerIcon} onPress={() => setTaskListVisible(true)}>
-                        <Ionicons name="checkmark-circle-outline" size={22} color="#fff" />
+                        <Ionicons name="checkmark-circle-outline" size={22} color={colors.text} />
                     </TouchableOpacity>
                 </View>
             </View>
@@ -768,7 +775,12 @@ export default function CalendarScreen() {
                 viewMode === 'month' && (
                     <View style={styles.weekHeader}>
                         {['일', '월', '화', '수', '목', '금', '토'].map((day, idx) => (
-                            <Text key={day} style={[styles.weekDay, idx === 0 && { color: '#FF6B6B' }, idx === 6 && { color: '#4A90D9' }]}>
+                            <Text key={day} style={[
+                                styles.weekDay,
+                                { color: colors.subText },
+                                idx === 0 && { color: '#FF6B6B' },
+                                idx === 6 && { color: '#4A90D9' }
+                            ]}>
                                 {day}
                             </Text>
                         ))}
@@ -797,7 +809,7 @@ export default function CalendarScreen() {
                                     key={currentDate} // 날짜 변경 시 강제 리렌더링
                                     markedDates={markedDates}
                                     theme={{
-                                        calendarBackground: Colors.navy,
+                                        calendarBackground: colors.background,
                                         textSectionTitleColor: 'transparent',
                                         monthTextColor: 'transparent',
                                         textMonthFontFamily: 'Pretendard-Bold',

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { supabase } from '../../services/supabase';
+import { supabase, fetchPeriodStats } from '../../services/supabase';
 import { Colors } from '../../constants/Colors';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { PieChart, BarChart } from 'react-native-chart-kit';
@@ -34,96 +34,113 @@ export default function StatsScreen() {
         try {
             setLoading(true);
 
-            // Fetch ledger data
-            const { data: ledger } = await supabase
-                .from('ledger')
-                .select('*')
-                .order('transaction_date', { ascending: false });
-
-            // Fetch bank transactions
-            const { data: bank } = await supabase
-                .from('bank_transactions')
-                .select('*')
-                .order('transaction_date', { ascending: false });
-
-            // Combine and process
-            const allExpenses: { date: string; amount: number; name: string; category?: string; categoryGroup?: CategoryGroupType }[] = [];
-
-            (ledger || []).forEach((item: any) => {
-                const isIncomeOrTransfer = item.category_group === 'income' || item.category_group === 'asset_transfer';
-                const isLegacyIncome = item.category === '수입' || item.category === '입금' || item.category === '이체' || item.category === '저축';
-
-                if (!isIncomeOrTransfer && !isLegacyIncome) {
-                    allExpenses.push({
-                        date: item.transaction_date?.split('T')[0] || '',
-                        amount: Math.abs(item.amount || 0),
-                        name: item.merchant_name || '',
-                        category: item.category,
-                        categoryGroup: item.category_group
-                    });
-                }
-            });
-
-            (bank || []).forEach((item: any) => {
-                if (item.transaction_type !== 'deposit') {
-                    allExpenses.push({
-                        date: item.transaction_date?.split('T')[0] || '',
-                        amount: Math.abs(item.amount || 0),
-                        name: item.receiver_name || '',
-                        category: item.category // Bank transactions might have categories now
-                    });
-                }
-            });
-
-            // Process category data (current month)
+            // Calculate Date Range (Last 6 Months)
             const now = new Date();
-            const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+            const currentYear = now.getFullYear();
+            const currentMonthIndex = now.getMonth(); // 0-11
 
-            const categoryMap = new Map<string, CategoryData>();
-            let total = 0;
+            // Start Date: 5 months ago
+            const startDateObj = new Date(currentYear, currentMonthIndex - 5, 1);
+            const startDate = `${startDateObj.getFullYear()}-${String(startDateObj.getMonth() + 1).padStart(2, '0')}-01`;
 
-            allExpenses.forEach(expense => {
-                if (expense.date.startsWith(currentMonth)) {
-                    // ✅ Priority: Stored Category > Classify Merchant
-                    const cat = expense.category || classifyMerchant(expense.name);
-                    const existing = categoryMap.get(cat) || { category: cat, amount: 0, count: 0 };
-                    existing.amount += expense.amount;
-                    existing.count += 1;
-                    categoryMap.set(cat, existing);
-                    total += expense.amount;
+            // End Date: Next Month 1st
+            const endDateObj = new Date(currentYear, currentMonthIndex + 1, 1);
+            const endDate = `${endDateObj.getFullYear()}-${String(endDateObj.getMonth() + 1).padStart(2, '0')}-01`;
+
+            console.log('[Stats] Fetching period stats:', { startDate, endDate });
+
+            const stats = await fetchPeriodStats(startDate, endDate);
+
+            // Helper to check if expense (Matches Unified Definition)
+            // Note: fetchPeriodStats filters ledger/bank somewhat, but raw includes what query returned.
+            // Actually fetchPeriodStats query strictly filters Ledger by date, but selects category_group.
+            // We need to apply the Spending Definition to the raw items.
+
+            const processExpenseItem = (item: any, source: 'event' | 'ledger' | 'bank') => {
+                if (source === 'event') {
+                    // Paid Events only
+                    if (!item.is_received && item.memo?.includes('[송금완료]')) return item.amount;
+                    return 0;
                 }
-            });
+                if (source === 'ledger') {
+                    // Expenses only
+                    const isIncome = item.category_group === 'income' || item.category === '수입' || item.category === '입금';
+                    if (!isIncome) return item.amount;
+                    return 0;
+                }
+                if (source === 'bank') {
+                    // Withdrawals only
+                    if (item.transaction_type === 'withdrawal') return item.amount;
+                    return 0;
+                }
+                return 0;
+            };
 
-            const sortedCategories = Array.from(categoryMap.values())
-                .sort((a, b) => b.amount - a.amount)
-                .slice(0, 6); // Top 6
+            const getCategory = (item: any, source: 'event' | 'ledger' | 'bank') => {
+                if (source === 'event') return '경조사비'; // Event Expenses
+                if (source === 'bank') return item.category || '이체/출금';
+                return item.category;
+            };
 
-            setCategoryData(sortedCategories);
-            setTotalSpending(total);
-
-            // Process monthly data (last 6 months)
+            // Process Monthly Data (Last 6 Months)
             const monthlyMap = new Map<string, number>();
+            // Initialize last 6 months
             for (let i = 5; i >= 0; i--) {
-                const d = new Date();
-                d.setMonth(d.getMonth() - i);
+                const d = new Date(currentYear, currentMonthIndex - i, 1);
                 const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
                 monthlyMap.set(key, 0);
             }
 
-            allExpenses.forEach(expense => {
-                const monthKey = expense.date.substring(0, 7);
-                if (monthlyMap.has(monthKey)) {
-                    monthlyMap.set(monthKey, (monthlyMap.get(monthKey) || 0) + expense.amount);
+            // Aggregate Monthly
+            const addToMonthly = (dateStr: string, amount: number) => {
+                const key = dateStr.substring(0, 7); // YYYY-MM
+                if (monthlyMap.has(key)) {
+                    monthlyMap.set(key, (monthlyMap.get(key) || 0) + amount);
                 }
-            });
+            };
+
+            stats.raw.events.forEach((e: any) => addToMonthly(e.event_date || '', processExpenseItem(e, 'event')));
+            stats.raw.ledger.forEach((e: any) => addToMonthly(e.transaction_date || '', processExpenseItem(e, 'ledger')));
+            stats.raw.bank.forEach((e: any) => addToMonthly(e.transaction_date || '', processExpenseItem(e, 'bank')));
 
             const monthlyArr: MonthlyData[] = [];
             monthlyMap.forEach((amount, month) => {
                 const [, m] = month.split('-');
                 monthlyArr.push({ month: `${parseInt(m)}월`, amount });
             });
-
             setMonthlyData(monthlyArr);
+
+
+            // Process Category Data (Current Month Only)
+            const currentMonthKey = `${currentYear}-${String(currentMonthIndex + 1).padStart(2, '0')}`;
+            const categoryMap = new Map<string, CategoryData>();
+            let currentMonthTotal = 0;
+
+            const processCurrentMonthItem = (item: any, source: 'event' | 'ledger' | 'bank', dateStr: string) => {
+                if (dateStr.startsWith(currentMonthKey)) {
+                    const amount = processExpenseItem(item, source);
+                    if (amount > 0) {
+                        const cat = getCategory(item, source);
+                        const existing = categoryMap.get(cat) || { category: cat, amount: 0, count: 0 };
+                        existing.amount += amount;
+                        existing.count += 1;
+                        categoryMap.set(cat, existing);
+                        currentMonthTotal += amount;
+                    }
+                }
+            };
+
+            stats.raw.events.forEach((e: any) => processCurrentMonthItem(e, 'event', e.event_date || ''));
+            stats.raw.ledger.forEach((e: any) => processCurrentMonthItem(e, 'ledger', e.transaction_date || ''));
+            stats.raw.bank.forEach((e: any) => processCurrentMonthItem(e, 'bank', e.transaction_date || ''));
+
+            const sortedCategories = Array.from(categoryMap.values())
+                .sort((a, b) => b.amount - a.amount)
+                .slice(0, 6);
+
+            setCategoryData(sortedCategories);
+            setTotalSpending(currentMonthTotal);
+
         } catch (error) {
             console.error('Error fetching stats:', error);
         } finally {

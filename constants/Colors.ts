@@ -13,6 +13,8 @@ export const Colors = {
   shadow: '#94A3B8',       // Shadow color
   primaryGradient: ['#0F172A', '#1E293B'], // For gradients
   red: '#EF4444',          // Red 500 for errors/delete
+  success: '#4ADE80',      // Light Green for positive values
+  danger: '#F87171',       // Light Red for negative values
   card: '#FFFFFF',         // Card background (White)
   primary: '#0F172A',      // Alias for navy (for compatibility)
   // Dark Theme (Onboarding)

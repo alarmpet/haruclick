@@ -18,8 +18,8 @@ import { DataStore } from '../../services/DataStore';
 import { FeedbackModal } from '../../components/FeedbackModal';
 import { SuccessModal } from '../../components/SuccessModal';
 import { CATEGORY_MAP, CATEGORY_GROUPS, getReviewCategoryList, CategoryGroupType } from '../../constants/categories';
-
-// ✅ Legacy CATEGORIES removed. Using constants/categories.ts
+import { useTheme } from '../../contexts/ThemeContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 
 // ✅ 날짜 유효성 체크 헬퍼 함수
@@ -100,6 +100,8 @@ const stableStringify = (value: any): string => {
 
 export default function SmartScanResultScreen() {
     console.log('[DEBUG] SmartScanResultScreen Mounting');
+    const { colors, isDark } = useTheme();
+    const insets = useSafeAreaInsets();
     const params = useLocalSearchParams();
     const router = useRouter();
 
@@ -496,7 +498,7 @@ export default function SmartScanResultScreen() {
         });
     };
 
-    if (dataList.length === 0) return <View style={styles.container}><ActivityIndicator /></View>;
+    if (dataList.length === 0) return <View style={[styles.container, { backgroundColor: colors.background }]}><ActivityIndicator color={colors.primary} /></View>;
 
     // ✅ 일괄 저장 (선택된 항목만)
     const handleSave = async () => {
@@ -669,18 +671,18 @@ export default function SmartScanResultScreen() {
         return (
             <>
                 {/* 상단 요약 */}
-                <View style={styles.card}>
+                <View style={[styles.card, { backgroundColor: colors.card }]}>
                     <View style={styles.headerRow}>
-                        <Ionicons name="list-outline" size={24} color={Colors.navy} />
-                        <Text style={styles.cardTitle}>{dataList.length}건의 거래 감지됨</Text>
+                        <Ionicons name="list-outline" size={24} color={colors.primary} />
+                        <Text style={[styles.cardTitle, { color: colors.text }]}>{dataList.length}건의 거래 감지됨</Text>
                     </View>
                     <TouchableOpacity onPress={toggleSelectAll} style={styles.selectAllRow}>
                         <Ionicons
                             name={selectedIndices.size === dataList.length ? "checkbox" : "square-outline"}
                             size={24}
-                            color={Colors.navy}
+                            color={colors.primary}
                         />
-                        <Text style={styles.selectAllText}>
+                        <Text style={[styles.selectAllText, { color: colors.primary }]}>
                             {selectedIndices.size === dataList.length ? '전체 해제' : '전체 선택'}
                         </Text>
                     </TouchableOpacity>
@@ -696,7 +698,12 @@ export default function SmartScanResultScreen() {
                     return (
                         <View
                             key={index}
-                            style={[styles.transactionCard, isSelected && styles.transactionCardSelected, !hasValidDate && styles.transactionCardWarning]}
+                            style={[
+                                styles.transactionCard,
+                                { backgroundColor: colors.card, borderColor: 'transparent' },
+                                isSelected && { borderColor: colors.primary, backgroundColor: isDark ? 'rgba(0,100,255,0.1)' : '#FFF7ED' },
+                                !hasValidDate && styles.transactionCardWarning
+                            ]}
                         >
                             {/* 체크박스 영역 - 토글 */}
                             <TouchableOpacity
@@ -741,7 +748,7 @@ export default function SmartScanResultScreen() {
                                                 : (isDeposit ? '+' : '-') + ((item as any).amount || 0).toLocaleString() + '원'}
                                     </Text>
                                 </View>
-                                <Text style={styles.transactionTarget}>
+                                <Text style={[styles.transactionTarget, { color: colors.text }]}>
                                     {item.type === 'GIFTICON'
                                         ? ((item as any).productName || '상품명 없음')
                                         : item.type === 'APPOINTMENT'
@@ -790,11 +797,11 @@ export default function SmartScanResultScreen() {
         return (
             <>
                 {/* 상단 헤더 */}
-                <View style={styles.editModeHeader}>
+                <View style={[styles.editModeHeader, { backgroundColor: colors.background }]}>
                     <TouchableOpacity style={styles.editModeBackButton} onPress={closeEditMode}>
-                        <Ionicons name="arrow-back" size={24} color={Colors.text} />
+                        <Ionicons name="arrow-back" size={24} color={colors.text} />
                     </TouchableOpacity>
-                    <Text style={styles.editModeTitle}>거래 내역 수정</Text>
+                    <Text style={[styles.editModeTitle, { color: colors.text }]}>거래 내역 수정</Text>
                 </View>
 
                 {/* 타입별 편집 폼 - 기존 renderContent 로직 재사용 */}
@@ -1080,21 +1087,30 @@ export default function SmartScanResultScreen() {
                                 <Text style={styles.cardTitle}>나와의 관계</Text>
                             </View>
                             <View style={styles.chipContainer}>
-                                {RELATIONS.map((rel) => (
-                                    <TouchableOpacity
-                                        key={rel}
-                                        style={[
-                                            styles.chip,
-                                            selectedRelation === rel && styles.activeChip
-                                        ]}
-                                        onPress={() => handleRelationChange(rel)}
-                                    >
-                                        <Text style={[
-                                            styles.chipText,
-                                            selectedRelation === rel && styles.activeChipText
-                                        ]}>{rel}</Text>
-                                    </TouchableOpacity>
-                                ))}
+                                {RELATIONS.map((rel) => {
+                                    const isSelected = selectedRelation === rel;
+                                    return (
+                                        <TouchableOpacity
+                                            key={rel}
+                                            style={[
+                                                styles.chip,
+                                                { backgroundColor: colors.background, borderColor: colors.border },
+                                                isSelected && { backgroundColor: isDark ? colors.primary : colors.navy, borderColor: isDark ? colors.primary : colors.navy }
+                                            ]}
+                                            onPress={() => handleRelationChange(rel)}
+                                            accessibilityRole="radio"
+                                            accessibilityState={{ selected: isSelected }}
+                                            accessibilityLabel={`${rel} 선택`}
+                                        >
+                                            {isSelected && <Ionicons name="checkmark" size={16} color="white" style={{ marginRight: 4 }} />}
+                                            <Text style={[
+                                                styles.chipText,
+                                                { color: colors.subText },
+                                                isSelected && { color: 'white', fontFamily: 'Pretendard-Bold' }
+                                            ]}>{rel}</Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
                             </View>
                         </View>
 
@@ -1681,29 +1697,39 @@ export default function SmartScanResultScreen() {
 
     return (
         <>
-            <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-                <Text style={styles.screenTitle}>스마트 분석 리포트</Text>
+            <ScrollView
+                style={[styles.container, { backgroundColor: colors.background }]}
+                contentContainerStyle={[
+                    styles.content,
+                    { paddingBottom: Math.max(insets.bottom, 24) + 80 } // footer space
+                ]}
+            >
+                <Text style={[styles.screenTitle, { color: colors.text }]}>스마트 분석 리포트</Text>
 
                 {renderContent()}
 
                 {/* ✅ 민심 물어보기 버튼 추가 */}
                 {data.type === 'INVITATION' && (
-                    <TouchableOpacity style={styles.pollButton} onPress={openPollModal}>
-                        <Ionicons name="people" size={20} color={Colors.white} style={{ marginRight: 8 }} />
+                    <TouchableOpacity style={[styles.pollButton, { backgroundColor: colors.navy }]} onPress={openPollModal}>
+                        <Ionicons name="people" size={20} color="white" style={{ marginRight: 8 }} />
                         <Text style={styles.pollButtonText}>익명으로 의견 물어보기</Text>
                     </TouchableOpacity>
                 )}
 
                 {/* ✅ AI 면책 문구 */}
                 <View style={styles.disclaimerContainer}>
-                    <Ionicons name="information-circle-outline" size={14} color={Colors.subText} />
-                    <Text style={styles.disclaimerText}>
+                    <Ionicons name="information-circle-outline" size={14} color={colors.subText} />
+                    <Text style={[styles.disclaimerText, { color: colors.subText }]}>
                         AI 분석은 100% 정확하지 않을 수 있습니다. 저장 전 내용을 확인해주세요.
                     </Text>
                 </View>
 
                 <TouchableOpacity
-                    style={[styles.saveButton, saving && { opacity: 0.7 }]}
+                    style={[
+                        styles.saveButton,
+                        saving && { opacity: 0.7 },
+                        { marginBottom: Math.max(insets.bottom, 20) }
+                    ]}
                     onPress={handleSave}
                     disabled={saving}
                 >
@@ -2077,7 +2103,6 @@ const styles = StyleSheet.create({
     sectionTitle: {
         fontFamily: 'Pretendard-Bold',
         fontSize: 18,
-        color: Colors.text,
         marginTop: 24,
         marginBottom: 12,
     },
@@ -2101,7 +2126,6 @@ const styles = StyleSheet.create({
         marginLeft: 4,
     },
     card: {
-        backgroundColor: Colors.white,
         borderRadius: 20,
         padding: 20,
         marginBottom: 16,
@@ -2222,24 +2246,20 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     chip: {
+        flexDirection: 'row',
+        alignItems: 'center',
         paddingHorizontal: 16,
         paddingVertical: 10,
         borderRadius: 20,
-        backgroundColor: Colors.white,
         borderWidth: 1,
-        borderColor: Colors.border,
     },
-    activeChip: {
-        backgroundColor: Colors.navy,
-        borderColor: Colors.navy,
-    },
+    activeChip: {},
     chipText: {
         fontFamily: 'Pretendard-Medium',
         fontSize: 14,
         color: Colors.subText,
     },
     activeChipText: {
-        color: Colors.white,
         fontFamily: 'Pretendard-Bold',
     },
     // ✅ 민심 물어보기 버튼 스타일

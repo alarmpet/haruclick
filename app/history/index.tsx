@@ -11,7 +11,7 @@ export default function ReportScreen() {
     const [activeTab, setActiveTab] = useState<Tab>('all');
     const [events, setEvents] = useState<EventRecord[]>([]);
     const [loading, setLoading] = useState(true);
-    const [stats, setStats] = useState({ totalGiven: 0, totalReceived: 0, diff: 0 });
+    const [stats, setStats] = useState({ totalGiven: 0, totalReceived: 0, pendingGiven: 0, diff: 0 });
 
     // 날짜 필터 상태
     const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -26,33 +26,37 @@ export default function ReportScreen() {
 
     const loadData = async () => {
         setLoading(true);
-        const eventsData = await getEvents();
+        // Server-side filtering by Year/Month
+        const eventsData = await getEvents(selectedYear, selectedMonth);
 
-        // 선택된 연도/월로 필터링
-        const filteredByMonth = eventsData.filter(e => {
-            const eventDate = new Date(e.date);
-            return eventDate.getFullYear() === selectedYear &&
-                (eventDate.getMonth() + 1) === selectedMonth;
-        });
+        // Filter valid amounts
+        const validEvents = eventsData.filter(e => (e.amount || 0) > 0);
 
-        // 통계 계산
+        // 통계 계산 (Unified Definition: Given = Paid Only)
         let totalGiven = 0;
         let totalReceived = 0;
+        let pendingGiven = 0;
 
-        filteredByMonth.forEach(e => {
+        validEvents.forEach(e => {
             const amount = e.amount || 0;
             if (e.isReceived) {
                 totalReceived += amount;
             } else {
-                totalGiven += amount;
+                // Check if Paid (Song-geum Wan-ryo)
+                if (e.isPaid) {
+                    totalGiven += amount;
+                } else {
+                    pendingGiven += amount;
+                }
             }
         });
 
-        setEvents(filteredByMonth);
+        setEvents(validEvents);
         setStats({
             totalGiven,
             totalReceived,
-            diff: totalReceived - totalGiven
+            pendingGiven,
+            diff: totalReceived - totalGiven // Diff usually excludes pending? Pending is future.
         });
         setLoading(false);
     };
@@ -136,9 +140,14 @@ export default function ReportScreen() {
             {/* Summary Header */}
             <View style={styles.summaryHeader}>
                 <View style={styles.statsContainer}>
-                    <View style={styles.statBox}>
-                        <Text style={styles.statLabel}>지출</Text>
-                        <Text style={styles.statValueGiven}>-{stats.totalGiven.toLocaleString()}원</Text>
+                    <View style={styles.summaryItem}>
+                        <Text style={[styles.summaryLabel, { color: Colors.subText }]}>지출 (확정)</Text>
+                        <Text style={[styles.summaryValue, { color: Colors.danger }]}>-{formatMoney(stats.totalGiven)}</Text>
+                        {stats.pendingGiven > 0 && (
+                            <Text style={{ fontSize: 12, color: Colors.orange, marginTop: 4 }}>
+                                (예정: {formatMoney(stats.pendingGiven)})
+                            </Text>
+                        )}
                     </View>
                     <View style={styles.statDivider} />
                     <View style={styles.statBox}>
@@ -302,6 +311,22 @@ const styles = StyleSheet.create({
     statBox: {
         flex: 1,
         alignItems: 'center',
+    },
+    summaryItem: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    summaryLabel: {
+        fontFamily: 'Pretendard-Medium',
+        fontSize: 14,
+        color: Colors.subText,
+        marginBottom: 8,
+    },
+    summaryValue: {
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 22,
+        color: '#F87171',
     },
     statDivider: {
         width: 1,

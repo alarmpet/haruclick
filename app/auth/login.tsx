@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ScrollView, Platform, Linking, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ScrollView, Platform, Linking, StatusBar, KeyboardAvoidingView } from 'react-native';
 import { useState, useEffect } from 'react';
 import { useRouter, Stack, Link } from 'expo-router';
 import { loginWithEmail } from '../../services/authService';
@@ -87,104 +87,110 @@ export default function LoginScreen() {
                 }}
             />
 
-            <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-                {/* Logo */}
-                <View style={styles.logoContainer}>
-                    <Text style={styles.logoEmoji}>📅</Text>
-                    <Text style={[styles.logoText, { color: colors.primary }]}>하루클릭</Text>
-                    <Text style={[styles.subtitle, { color: colors.subText }]}>내 손안의 경조사 관리 비서</Text>
-                </View>
+            <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                style={{ flex: 1 }}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
+            >
+                <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 40 }]} keyboardShouldPersistTaps="handled">
+                    {/* Logo */}
+                    <View style={styles.logoContainer}>
+                        <Text style={styles.logoEmoji}>📅</Text>
+                        <Text style={[styles.logoText, { color: colors.primary }]}>하루클릭</Text>
+                        <Text style={[styles.subtitle, { color: colors.subText }]}>내 손안의 경조사 관리 비서</Text>
+                    </View>
 
-                {/* Email Input */}
-                <View style={[styles.inputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                    <TextInput
-                        style={[styles.input, { color: colors.text }]}
-                        placeholder="이메일"
-                        placeholderTextColor={colors.subText}
-                        value={email}
-                        onChangeText={setEmail}
-                        autoCapitalize="none"
-                        keyboardType="email-address"
-                        accessibilityLabel="이메일 입력창"
-                    />
-                </View>
+                    {/* Email Input */}
+                    <View style={[styles.inputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                        <TextInput
+                            style={[styles.input, { color: colors.text }]}
+                            placeholder="이메일"
+                            placeholderTextColor={colors.subText}
+                            value={email}
+                            onChangeText={setEmail}
+                            autoCapitalize="none"
+                            keyboardType="email-address"
+                            accessibilityLabel="이메일 입력창"
+                        />
+                    </View>
 
-                {/* Password Input */}
-                <View style={[styles.inputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                    <TextInput
-                        style={[styles.input, { color: colors.text }]}
-                        placeholder="비밀번호"
-                        placeholderTextColor={colors.subText}
-                        value={password}
-                        onChangeText={setPassword}
-                        secureTextEntry={!showPassword}
-                        accessibilityLabel="비밀번호 입력창"
-                    />
-                    <TouchableOpacity
-                        onPress={() => setShowPassword(!showPassword)}
-                        accessibilityLabel={showPassword ? "비밀번호 숨기기" : "비밀번호 보기"}
-                    >
-                        <Ionicons name={showPassword ? "eye" : "eye-off"} size={20} color={colors.subText} />
-                    </TouchableOpacity>
-                </View>
-
-                {/* Login Button */}
-                <TouchableOpacity
-                    style={[styles.loginButton, loading && styles.buttonDisabled, { backgroundColor: colors.primary }]}
-                    onPress={handleLogin}
-                    disabled={loading}
-                    accessibilityLabel="로그인 버튼"
-                >
-                    <Text style={[styles.loginButtonText, { color: colors.background }]}>{loading ? '로그인 중...' : '로그인'}</Text>
-                </TouchableOpacity>
-
-                {/* Divider */}
-                <View style={styles.divider}>
-                    <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-                    <Text style={[styles.dividerText, { color: colors.subText }]}>또는</Text>
-                    <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-                </View>
-
-                {/* Social Login Buttons */}
-                <View style={styles.socialContainer}>
-                    <TouchableOpacity
-                        style={[styles.socialButton, { backgroundColor: Colors.kakaoYellow }]}
-                        onPress={() => handleSocialLogin('kakao')}
-                        accessibilityLabel="카카오 로그인"
-                    >
-                        <Ionicons name="chatbubble-sharp" size={20} color="#3C1E1E" />
-                        <Text style={[styles.socialText, { color: '#3C1E1E' }]}>카카오 로그인</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={[styles.socialButton, { backgroundColor: Colors.naverGreen }]}
-                        onPress={handleNaverLogin}
-                        accessibilityLabel="네이버 로그인"
-                    >
-                        <Text style={[styles.socialText, { color: 'white', fontWeight: 'bold' }]}>N</Text>
-                        <Text style={[styles.socialText, { color: 'white' }]}> 네이버 로그인</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={[styles.socialButton, { backgroundColor: Colors.googleBlue }]}
-                        onPress={() => handleSocialLogin('google')}
-                        accessibilityLabel="구글 로그인"
-                    >
-                        <Ionicons name="logo-google" size={20} color="white" />
-                        <Text style={[styles.socialText, { color: 'white' }]}>구글 로그인</Text>
-                    </TouchableOpacity>
-                </View>
-
-                {/* Signup Link */}
-                <View style={styles.signupLinkContainer}>
-                    <Text style={[styles.signupLinkText, { color: colors.subText }]}>계정이 없으신가요? </Text>
-                    <Link href="/auth/signup" asChild>
-                        <TouchableOpacity accessibilityLabel="회원가입 하기">
-                            <Text style={[styles.signupLink, { color: colors.primary }]}>회원가입</Text>
+                    {/* Password Input */}
+                    <View style={[styles.inputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                        <TextInput
+                            style={[styles.input, { color: colors.text }]}
+                            placeholder="비밀번호"
+                            placeholderTextColor={colors.subText}
+                            value={password}
+                            onChangeText={setPassword}
+                            secureTextEntry={!showPassword}
+                            accessibilityLabel="비밀번호 입력창"
+                        />
+                        <TouchableOpacity
+                            onPress={() => setShowPassword(!showPassword)}
+                            accessibilityLabel={showPassword ? "비밀번호 숨기기" : "비밀번호 보기"}
+                        >
+                            <Ionicons name={showPassword ? "eye" : "eye-off"} size={20} color={colors.subText} />
                         </TouchableOpacity>
-                    </Link>
-                </View>
-            </ScrollView>
+                    </View>
+
+                    {/* Login Button */}
+                    <TouchableOpacity
+                        style={[styles.loginButton, loading && styles.buttonDisabled, { backgroundColor: colors.primary }]}
+                        onPress={handleLogin}
+                        disabled={loading}
+                        accessibilityLabel="로그인 버튼"
+                    >
+                        <Text style={[styles.loginButtonText, { color: colors.background }]}>{loading ? '로그인 중...' : '로그인'}</Text>
+                    </TouchableOpacity>
+
+                    {/* Divider */}
+                    <View style={styles.divider}>
+                        <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+                        <Text style={[styles.dividerText, { color: colors.subText }]}>또는</Text>
+                        <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+                    </View>
+
+                    {/* Social Login Buttons */}
+                    <View style={styles.socialContainer}>
+                        <TouchableOpacity
+                            style={[styles.socialButton, { backgroundColor: Colors.kakaoYellow }]}
+                            onPress={() => handleSocialLogin('kakao')}
+                            accessibilityLabel="카카오 로그인"
+                        >
+                            <Ionicons name="chatbubble-sharp" size={20} color="#3C1E1E" />
+                            <Text style={[styles.socialText, { color: '#3C1E1E' }]}>카카오 로그인</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.socialButton, { backgroundColor: Colors.naverGreen }]}
+                            onPress={handleNaverLogin}
+                            accessibilityLabel="네이버 로그인"
+                        >
+                            <Text style={[styles.socialText, { color: 'white', fontWeight: 'bold' }]}>N</Text>
+                            <Text style={[styles.socialText, { color: 'white' }]}> 네이버 로그인</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.socialButton, { backgroundColor: Colors.googleBlue }]}
+                            onPress={() => handleSocialLogin('google')}
+                            accessibilityLabel="구글 로그인"
+                        >
+                            <Ionicons name="logo-google" size={20} color="white" />
+                            <Text style={[styles.socialText, { color: 'white' }]}>구글 로그인</Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    {/* Signup Link */}
+                    <View style={styles.signupLinkContainer}>
+                        <Text style={[styles.signupLinkText, { color: colors.subText }]}>계정이 없으신가요? </Text>
+                        <Link href="/auth/signup" asChild>
+                            <TouchableOpacity accessibilityLabel="회원가입 하기">
+                                <Text style={[styles.signupLink, { color: colors.primary }]}>회원가입</Text>
+                            </TouchableOpacity>
+                        </Link>
+                    </View>
+                </ScrollView>
+            </KeyboardAvoidingView>
         </View>
     );
 }
