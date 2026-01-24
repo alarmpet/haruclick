@@ -63,9 +63,16 @@ export default function StatsScreen() {
                     return 0;
                 }
                 if (source === 'ledger') {
-                    // Expenses only
-                    const isIncome = item.category_group === 'income' || item.category === '수입' || item.category === '입금';
-                    if (!isIncome) return item.amount;
+                    // Expenses only (Unified Definition: Exclude Income, Transfer, Savings)
+                    const isExcluded =
+                        item.category_group === 'income' ||
+                        item.category_group === 'asset_transfer' ||
+                        item.category === '수입' ||
+                        item.category === '입금' ||
+                        item.category === '이체' ||
+                        item.category === '저축';
+
+                    if (!isExcluded) return item.amount;
                     return 0;
                 }
                 if (source === 'bank') {

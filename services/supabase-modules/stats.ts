@@ -77,7 +77,8 @@ export async function fetchPeriodStats(startDate: string, endDate: string): Prom
             e.category_group !== 'asset_transfer' &&
             e.category !== '수입' &&
             e.category !== '입금' &&
-            e.category !== '이체' // Assuming transfers are not spending
+            e.category !== '이체' && // Assuming transfers are not spending
+            e.category !== '저축'
         ).reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
 
         const ledgerReceived = ledger?.filter((e: any) =>

@@ -36,7 +36,7 @@ export async function getUpcomingEvents(limit = 2): Promise<EventRecord[]> {
         // 다가오는 일정 (오늘 제외, 내일부터)
         const { data, error } = await supabase
             .from('events')
-            .select('*')
+            .select('id, category, type, name, relation, event_date, amount, is_received, memo, is_completed, start_time, end_time, location')
             .gt('event_date', today)
             .order('event_date', { ascending: true })
             .limit(limit);
@@ -79,7 +79,7 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
     // 1. Events (경조사/일정)
     const { data: events } = await supabase
         .from('events')
-        .select('*')
+        .select('id, category, type, name, relation, event_date, amount, is_received, memo, is_completed, start_time, end_time, location')
         .gte('event_date', today)
         .lt('event_date', tomorrow)
         .order('event_date', { ascending: true });
@@ -87,7 +87,7 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
     // 2. Ledger (가계부)
     const { data: ledger } = await supabase
         .from('ledger')
-        .select('*')
+        .select('id, category, merchant_name, transaction_date, amount, memo')
         .gte('transaction_date', today)
         .lt('transaction_date', tomorrow)
         .order('transaction_date', { ascending: true });
@@ -95,7 +95,7 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
     // 3. Bank (이체)
     const { data: bank } = await supabase
         .from('bank_transactions')
-        .select('*')
+        .select('id, transaction_type, sender_name, receiver_name, category, transaction_date, amount, memo')
         .gte('transaction_date', today)
         .lt('transaction_date', tomorrow)
         .order('transaction_date', { ascending: true });

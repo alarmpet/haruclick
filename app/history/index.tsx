@@ -42,8 +42,8 @@ export default function ReportScreen() {
             if (e.isReceived) {
                 totalReceived += amount;
             } else {
-                // Check if Paid (Song-geum Wan-ryo)
-                if (e.isPaid) {
+                // Check if Paid (Unified Definition: Memo includes [송금완료])
+                if (e.memo?.includes('[송금완료]')) {
                     totalGiven += amount;
                 } else {
                     pendingGiven += amount;
