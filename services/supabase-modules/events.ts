@@ -36,7 +36,7 @@ export async function getUpcomingEvents(limit = 2): Promise<EventRecord[]> {
         // 다가오는 일정 (오늘 제외, 내일부터)
         const { data, error } = await supabase
             .from('events')
-            .select('id, category, type, name, relation, event_date, amount, is_received, memo, is_completed, start_time, end_time, location')
+            .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location')
             .gt('event_date', today)
             .order('event_date', { ascending: true })
             .limit(limit);
@@ -49,12 +49,12 @@ export async function getUpcomingEvents(limit = 2): Promise<EventRecord[]> {
             type: item.type === 'APPOINTMENT' ? '일정' : item.type, // UI 표시용 한글화
             name: item.name,
             relation: item.relation,
-            date: item.event_date,
+            date: item.event_date.split('T')[0],
             amount: item.amount,
             isReceived: item.is_received,
             memo: item.memo,
             isPaid: item.memo?.includes('[송금완료]') || false,
-            isCompleted: item.is_completed,
+            isCompleted: false, // item.is_completed (Column missing)
             startTime: item.start_time,
             endTime: item.end_time,
             location: item.location,
@@ -79,7 +79,7 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
     // 1. Events (경조사/일정)
     const { data: events } = await supabase
         .from('events')
-        .select('id, category, type, name, relation, event_date, amount, is_received, memo, is_completed, start_time, end_time, location')
+        .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location')
         .gte('event_date', today)
         .lt('event_date', tomorrow)
         .order('event_date', { ascending: true });
@@ -106,7 +106,7 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
         type: item.type,
         name: item.name,
         relation: item.relation,
-        date: item.event_date,
+        date: item.event_date.split('T')[0],
         amount: item.amount,
         isReceived: item.is_received,
         memo: item.memo,
@@ -119,7 +119,7 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
         type: 'receipt' as const,
         name: item.merchant_name || '결제',
         relation: item.category,
-        date: item.transaction_date,
+        date: item.transaction_date.split('T')[0],
         amount: item.amount,
         isReceived: false,
         memo: item.memo,
@@ -132,7 +132,7 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
         type: 'transfer' as const,
         name: item.transaction_type === 'deposit' ? (item.sender_name || '입금') : (item.receiver_name || '송금'),
         relation: item.category,
-        date: item.transaction_date,
+        date: item.transaction_date.split('T')[0],
         amount: item.amount,
         isReceived: item.transaction_type === 'deposit',
         memo: item.memo,
@@ -160,7 +160,7 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
     console.log('[getEvents] Fetching events table...', { year, month });
     let eventsQuery = supabase
         .from('events')
-        .select('id, category, type, name, relation, event_date, amount, is_received, memo, is_completed, start_time, end_time, location')
+        .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location')
         .order('event_date', { ascending: true });
 
     if (startDate && endDate) {
@@ -204,7 +204,7 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
         type: item.type,
         name: item.name,
         relation: item.relation,
-        date: item.event_date,
+        date: item.event_date.split('T')[0],
         amount: item.amount,
         isReceived: item.is_received,
         memo: item.memo,
@@ -218,7 +218,7 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
         type: 'receipt' as const,
         name: item.merchant_name || '결제',
         relation: item.category,
-        date: item.transaction_date,
+        date: item.transaction_date.split('T')[0],
         amount: item.amount,
         isReceived: false,
         memo: item.memo,
@@ -231,7 +231,7 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
         type: 'transfer' as const,
         name: item.transaction_type === 'deposit' ? (item.sender_name || '입금') : (item.receiver_name || '송금'),
         relation: item.category,
-        date: item.transaction_date,
+        date: item.transaction_date.split('T')[0],
         amount: item.amount,
         isReceived: item.transaction_type === 'deposit',
         memo: item.memo,
@@ -241,4 +241,21 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
     return [...eventRecords, ...ledgerRecords, ...bankRecords].sort((a, b) =>
         new Date(a.date).getTime() - new Date(b.date).getTime()
     );
+}
+
+/**
+ * 일반 이벤트 삭제 (Fix: Missing function)
+ */
+export async function deleteEvent(id: string) {
+    const { error } = await supabase
+        .from('events')
+        .delete()
+        .eq('id', id);
+
+    if (error) {
+        console.error('Error deleting event:', error);
+        throw error;
+    }
+    invalidateCache(); // ✅ 캐시 무효화
+    return { success: true };
 }

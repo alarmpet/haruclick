@@ -254,26 +254,34 @@ export default function Home() {
                     activeOpacity={0.8}
                 >
                     <View style={styles.reportHeader}>
-                        <View style={{ gap: 4 }}>
-                            <Text style={[styles.reportTitle, { color: colors.text }]}>{new Date().getFullYear()}년 {new Date().getMonth() + 1}월 지출</Text>
-                            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-                                <Text style={[styles.statValueOut, { color: colors.danger }]}>
-                                    -{stats.totalGiven.toLocaleString()}원
-                                </Text>
-                                {stats.pendingGiven > 0 && (
-                                    <Text style={{ fontSize: 13, color: colors.subText }}>
-                                        (송금 예정 {stats.pendingGiven.toLocaleString()}원)
-                                    </Text>
-                                )}
-                            </View>
-                            <Text style={[styles.pendingText, { color: stats.spendingDiff > 0 ? colors.danger : colors.success }]}>
-                                {stats.spendingDiff > 0 ? '▲' : '▼'} 지난달 대비 {Math.abs(stats.spendingDiff).toLocaleString()}원 {stats.spendingDiff > 0 ? '더 씀' : '덜 씀'}
-                            </Text>
-                        </View>
+                        <Text style={[styles.reportTitle, { color: colors.text }]}>{new Date().getFullYear()}년 {new Date().getMonth() + 1}월 지출</Text>
                         <Ionicons name="chevron-forward" size={18} color={colors.subText} />
                     </View>
 
                     <View style={styles.statsRow}>
+                        {/* Spending Column */}
+                        <View style={styles.statItem}>
+                            <Text style={[styles.statLabel, { color: colors.subText }]}>지출</Text>
+                            <Text style={[styles.statValueOut, { color: colors.danger }]}>
+                                -{Math.abs(stats.totalGiven).toLocaleString()}원
+                            </Text>
+                            {/* Pending & Comparison under Spending */}
+                            <View style={{ marginTop: 4 }}>
+                                {stats.pendingGiven > 0 && (
+                                    <Text style={{ fontSize: 12, color: colors.subText, marginBottom: 2 }}>
+                                        (송금 예정 {stats.pendingGiven.toLocaleString()}원)
+                                    </Text>
+                                )}
+                                <Text style={[styles.pendingText, { color: stats.spendingDiff > 0 ? colors.danger : colors.success }]}>
+                                    {stats.spendingDiff > 0 ? '▲' : '▼'} 지난달 대비 {Math.abs(stats.spendingDiff).toLocaleString()}원 {stats.spendingDiff > 0 ? '더 씀' : '덜 씀'}
+                                </Text>
+                            </View>
+                        </View>
+
+                        {/* Divider */}
+                        <View style={{ width: 1, backgroundColor: colors.border, marginHorizontal: 16 }} />
+
+                        {/* Income Column */}
                         <View style={styles.statItem}>
                             <Text style={[styles.statLabel, { color: colors.subText }]}>수입</Text>
                             <Text style={[styles.statValueIn, { color: colors.success }]}>+{stats.totalReceived.toLocaleString()}</Text>

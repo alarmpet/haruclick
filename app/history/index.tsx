@@ -2,12 +2,14 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, 
 import { useState, useCallback } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { Colors } from '../../constants/Colors';
+import { useTheme } from '../../contexts/ThemeContext';
 import { getEvents, EventRecord } from '../../services/supabase';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
 type Tab = 'all' | 'given' | 'received';
 
 export default function ReportScreen() {
+    const { colors, isDark } = useTheme();
     const [activeTab, setActiveTab] = useState<Tab>('all');
     const [events, setEvents] = useState<EventRecord[]>([]);
     const [loading, setLoading] = useState(true);
@@ -42,11 +44,18 @@ export default function ReportScreen() {
             if (e.isReceived) {
                 totalReceived += amount;
             } else {
-                // Check if Paid (Unified Definition: Memo includes [송금완료])
-                if (e.memo?.includes('[송금완료]')) {
-                    totalGiven += amount;
+                // Unified Definition:
+                // 1. Events: Requires [송금완료] tag
+                // 2. Ledger/Bank: Already filtered as expenses, so always Paid
+                if (e.source === 'events') {
+                    if (e.memo?.includes('[송금완료]')) {
+                        totalGiven += amount;
+                    } else {
+                        pendingGiven += amount;
+                    }
                 } else {
-                    pendingGiven += amount;
+                    // Ledger / Bank (Expenses)
+                    totalGiven += amount;
                 }
             }
         });
@@ -91,7 +100,7 @@ export default function ReportScreen() {
     const months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
     const renderItem = ({ item }: { item: EventRecord }) => (
-        <View style={styles.eventCard}>
+        <View style={[styles.eventCard, { backgroundColor: colors.card }]}>
             <View style={styles.eventLeft}>
                 <View style={[styles.eventIcon, item.isReceived ? styles.receivedIcon : styles.givenIcon]}>
                     <Ionicons
@@ -101,8 +110,8 @@ export default function ReportScreen() {
                     />
                 </View>
                 <View style={{ flex: 1 }}>
-                    <Text style={styles.eventName} numberOfLines={1}>{item.name}</Text>
-                    <Text style={styles.eventDetail}>
+                    <Text style={[styles.eventName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
+                    <Text style={[styles.eventDetail, { color: colors.subText }]}>
                         {item.relation || item.type} · {item.date?.split('T')[0]}
                     </Text>
                 </View>
@@ -117,31 +126,31 @@ export default function ReportScreen() {
     );
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.background }]}>
             {/* Date Selector */}
             <View style={styles.dateSelector}>
                 <TouchableOpacity onPress={() => changeMonth(-1)} style={styles.arrowButton}>
-                    <Ionicons name="chevron-back" size={24} color={Colors.white} />
+                    <Ionicons name="chevron-back" size={24} color={colors.text} />
                 </TouchableOpacity>
 
                 <TouchableOpacity
                     onPress={() => setDatePickerVisible(true)}
                     style={styles.dateButton}
                 >
-                    <Text style={styles.dateText}>{selectedYear}년 {selectedMonth}월</Text>
-                    <Ionicons name="chevron-down" size={18} color={Colors.subText} />
+                    <Text style={[styles.dateText, { color: colors.text }]}>{selectedYear}년 {selectedMonth}월</Text>
+                    <Ionicons name="chevron-down" size={18} color={colors.text} />
                 </TouchableOpacity>
 
                 <TouchableOpacity onPress={() => changeMonth(1)} style={styles.arrowButton}>
-                    <Ionicons name="chevron-forward" size={24} color={Colors.white} />
+                    <Ionicons name="chevron-forward" size={24} color={colors.text} />
                 </TouchableOpacity>
             </View>
 
             {/* Summary Header */}
             <View style={styles.summaryHeader}>
-                <View style={styles.statsContainer}>
+                <View style={[styles.statsContainer, { backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1 }]}>
                     <View style={styles.summaryItem}>
-                        <Text style={[styles.summaryLabel, { color: Colors.subText }]}>지출 (확정)</Text>
+                        <Text style={[styles.summaryLabel, { color: colors.subText }]}>지출 (확정)</Text>
                         <Text style={[styles.summaryValue, { color: Colors.danger }]}>-{formatMoney(stats.totalGiven)}</Text>
                         {stats.pendingGiven > 0 && (
                             <Text style={{ fontSize: 12, color: Colors.orange, marginTop: 4 }}>
@@ -149,16 +158,16 @@ export default function ReportScreen() {
                             </Text>
                         )}
                     </View>
-                    <View style={styles.statDivider} />
+                    <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
                     <View style={styles.statBox}>
-                        <Text style={styles.statLabel}>수입</Text>
+                        <Text style={[styles.statLabel, { color: colors.subText }]}>수입</Text>
                         <Text style={styles.statValueReceived}>+{stats.totalReceived.toLocaleString()}원</Text>
                     </View>
                 </View>
 
                 {/* Balance */}
-                <View style={styles.balanceBox}>
-                    <Text style={styles.balanceLabel}>수지</Text>
+                <View style={[styles.balanceBox, { backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1 }]}>
+                    <Text style={[styles.balanceLabel, { color: colors.subText }]}>수지</Text>
                     <Text style={[
                         styles.balanceValue,
                         stats.diff >= 0 ? styles.balancePositive : styles.balanceNegative
@@ -173,10 +182,14 @@ export default function ReportScreen() {
                 {(['all', 'given', 'received'] as Tab[]).map((tab) => (
                     <TouchableOpacity
                         key={tab}
-                        style={[styles.tab, activeTab === tab && styles.activeTab]}
+                        style={[styles.tab, activeTab === tab && { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : colors.card, borderColor: colors.border, borderWidth: 1 }]}
                         onPress={() => setActiveTab(tab)}
                     >
-                        <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>
+                        <Text style={[
+                            styles.tabText,
+                            { color: colors.subText },
+                            activeTab === tab && { color: colors.text, fontWeight: '700' }
+                        ]}>
                             {tab === 'all' ? '전체' : tab === 'given' ? '지출' : '수입'}
                         </Text>
                     </TouchableOpacity>
@@ -197,10 +210,10 @@ export default function ReportScreen() {
                     ListEmptyComponent={
                         <View style={styles.emptyContainer}>
                             <View style={styles.emptyIcon}>
-                                <Ionicons name="receipt-outline" size={48} color={Colors.subText} />
+                                <Ionicons name="receipt-outline" size={48} color={colors.subText} />
                             </View>
-                            <Text style={styles.emptyTitle}>{selectedMonth}월 내역이 없어요</Text>
-                            <Text style={styles.emptyText}>스캔으로 내역을 추가해보세요</Text>
+                            <Text style={[styles.emptyTitle, { color: colors.text }]}>{selectedMonth}월 내역이 없어요</Text>
+                            <Text style={[styles.emptyText, { color: colors.subText }]}>스캔으로 내역을 추가해보세요</Text>
                         </View>
                     }
                 />
@@ -220,9 +233,9 @@ export default function ReportScreen() {
                 >
                     <View style={styles.modalContent}>
                         <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>기간 선택</Text>
+                            <Text style={[styles.modalTitle, { color: colors.text }]}>기간 선택</Text>
                             <TouchableOpacity onPress={() => setDatePickerVisible(false)}>
-                                <Ionicons name="close" size={24} color={Colors.text} />
+                                <Ionicons name="close" size={24} color={colors.text} />
                             </TouchableOpacity>
                         </View>
 
