@@ -124,13 +124,13 @@ export default function Home() {
             const currentMonth = now.getMonth() + 1;
 
             // This Month
-            const thisMonthStart = `${currentYear} -${String(currentMonth).padStart(2, '0')}-01`;
+            const thisMonthStart = `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`;
             const nextMonthDate = new Date(currentYear, currentMonth, 1); // Month is 0-indexed for Date constructor
-            const thisMonthEnd = `${nextMonthDate.getFullYear()} -${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}-01`;
+            const thisMonthEnd = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}-01`;
 
             // Last Month
             const lastMonthDate = new Date(currentYear, currentMonth - 2, 1); // currentMonth is 1-indexed, so currentMonth-2 gives previous month's 0-indexed value
-            const lastMonthStart = `${lastMonthDate.getFullYear()} -${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}-01`;
+            const lastMonthStart = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}-01`;
             // Last Month End is This Month Start
             const lastMonthEnd = thisMonthStart;
 

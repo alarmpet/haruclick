@@ -37,17 +37,17 @@ export async function fetchPeriodStats(startDate: string, endDate: string): Prom
         ] = await Promise.all([
             supabase
                 .from('events')
-                .select('amount, type, is_received, memo')
+                .select('amount, type, is_received, memo, event_date')
                 .gte('event_date', startDate)
                 .lt('event_date', endDate),
             supabase
                 .from('ledger')
-                .select('amount, category, category_group')
+                .select('amount, category, category_group, transaction_date')
                 .gte('transaction_date', startDate)
                 .lt('transaction_date', endDate),
             supabase
                 .from('bank_transactions')
-                .select('amount, transaction_type')
+                .select('amount, transaction_type, transaction_date')
                 .gte('transaction_date', startDate)
                 .lt('transaction_date', endDate)
         ]);

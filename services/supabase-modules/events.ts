@@ -198,14 +198,10 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
     const { data: bank, error: bankError } = await bankQuery;
     console.log('[getEvents] Bank fetched:', bank?.length);
 
-    if (eventError) console.error('Error fetching events:', eventError);
-    if (ledgerError) console.error('Error fetching ledger:', ledgerError);
-    if (bankError) console.error('Error fetching bank transactions:', bankError);
-
     const eventRecords = (events || []).map((item: any) => ({
         id: item.id,
         category: item.category || 'ceremony',
-        type: item.type === 'APPOINTMENT' ? '일정' : item.type, // UI 표시용 한글화
+        type: item.type,
         name: item.name,
         relation: item.relation,
         date: item.event_date,
@@ -213,23 +209,19 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
         isReceived: item.is_received,
         memo: item.memo,
         isPaid: item.memo?.includes('[송금완료]') || false,
-        isCompleted: item.is_completed,
-        startTime: item.start_time,
-        endTime: item.end_time,
-        location: item.location,
         source: 'events' as const,
     }));
 
     const ledgerRecords = (ledger || []).map((item: any) => ({
         id: item.id,
         category: 'expense' as EventCategory,
-        type: (item.category === '수입' || item.category === '입금') ? 'transfer' as const : 'receipt' as const,
+        type: 'receipt' as const,
         name: item.merchant_name || '결제',
         relation: item.category,
-        date: item.transaction_date ? item.transaction_date.split('T')[0] : '',
+        date: item.transaction_date,
         amount: item.amount,
-        isReceived: (item.category === '수입' || item.category === '입금'),
-        memo: item.memo || `[가계부] ${item.merchant_name}`,
+        isReceived: false,
+        memo: item.memo,
         source: 'ledger' as const,
     }));
 
@@ -237,102 +229,16 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
         id: item.id,
         category: 'expense' as EventCategory,
         type: 'transfer' as const,
-        name: item.transaction_type === 'deposit' ? `${item.sender_name || '입금'} (입금)` : `${item.receiver_name || '송금'} (송금)`,
-        relation: item.category, // '인맥', '용돈' 등
-        date: item.transaction_date ? item.transaction_date.split('T')[0] : '',
+        name: item.transaction_type === 'deposit' ? (item.sender_name || '입금') : (item.receiver_name || '송금'),
+        relation: item.category,
+        date: item.transaction_date,
         amount: item.amount,
         isReceived: item.transaction_type === 'deposit',
         memo: item.memo,
         source: 'bank_transactions' as const,
     }));
 
-    // Merge and sort
-    console.log('[getEvents] Merging and sorting...');
-    const result = [...eventRecords, ...ledgerRecords, ...bankRecords].sort((a, b) => a.date.localeCompare(b.date));
-    console.log('[getEvents] Returning result:', result.length);
-    return result;
-}
-
-/**
- * 이벤트 삭제
- */
-export async function deleteEvent(eventId: string) {
-    console.log('[deleteEvent] Deleting event ID:', eventId);
-
-    // UUID 형식 검증 (events 테이블은 UUID만 사용)
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(eventId)) {
-        console.error('Error deleting event: Invalid UUID format:', eventId);
-        // Alert handled by caller usually, but throwing error ensures it propagates
-        throw new Error(`잘못된 ID 형식입니다. 이 항목은 Supabase에서 직접 삭제해주세요. (ID: ${eventId})`);
-    }
-
-    const { error } = await supabase
-        .from('events')
-        .delete()
-        .eq('id', eventId);
-
-    if (error) {
-        console.error('Error deleting event from Supabase:', error);
-        throw error;
-    }
-    invalidateCache(); // ✅ 캐시 무효화
-    console.log('[deleteEvent] Success');
-    return { success: true };
-}
-
-export async function findPeopleByName(name: string): Promise<string[]> {
-    const { data, error } = await supabase
-        .from('events')
-        .select('name')
-        .ilike('name', `%${name}%`);
-
-    if (error) {
-        console.error('Error finding people:', error);
-        return [];
-    }
-
-    // Return unique names
-    const names = data.map((d: any) => d.name);
-    return [...new Set(names)];
-}
-
-/**
- * Get all unique person names from the ledger.
- */
-export async function getAllPeople(): Promise<string[]> {
-    const { data, error } = await supabase
-        .from('events')
-        .select('name');
-
-    if (error) {
-        console.error('Error fetching all people:', error);
-        return [];
-    }
-
-    const names = data.map((d: any) => d.name);
-    // Filter out duplicates and empty names
-    return [...new Set(names)].filter(Boolean).sort();
-}
-
-export async function saveEvent(record: Omit<EventRecord, 'id'>): Promise<void> {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error('로그인이 필요합니다.');
-
-    const { error } = await supabase
-        .from('events')
-        .insert({
-            user_id: user.id,
-            type: record.type,
-            name: record.name,
-            relation: record.relation,
-            event_date: record.date,
-            amount: record.amount,
-            is_received: record.isReceived
-        });
-
-    if (error) {
-        console.error('Error saving event:', error);
-        throw error;
-    }
+    return [...eventRecords, ...ledgerRecords, ...bankRecords].sort((a, b) =>
+        new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
 }
