@@ -1,4 +1,5 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated, Easing, Pressable, RefreshControl } from 'react-native';
+import { Svg, Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
 import { Colors } from '../constants/Colors';
 import { useRouter } from 'expo-router';
@@ -177,13 +178,13 @@ export default function Home() {
             {
                 scale: anim.interpolate({
                     inputRange: [0, 1],
-                    outputRange: [1, 1.8], // 더 작은 확장
+                    outputRange: [1, 1.7], // Gentle expansion
                 }),
             },
         ],
         opacity: anim.interpolate({
-            inputRange: [0, 0.3, 1],
-            outputRange: [0.15, 0.08, 0], // 더 연하게
+            inputRange: [0, 1],
+            outputRange: [0.2, 0], // Single direction fade out
         }),
     }), []);
 
@@ -208,26 +209,73 @@ export default function Home() {
                     </Text>
                 </View>
 
-                {/* Hero Scan Button with Ripple */}
-                <View style={styles.heroContainer}>
-                    {/* Ripple Effects (2개 - 잔잔하게) */}
-                    <Animated.View style={[styles.ripple, getRippleStyle(ripple1), { backgroundColor: colors.orange }]} />
-                    <Animated.View style={[styles.ripple, getRippleStyle(ripple2), { backgroundColor: colors.orange }]} />
+                <View style={[styles.heroContainer, { marginTop: 40 }]}>
+                    <Animated.View style={[
+                        styles.ripple,
+                        {
+                            transform: [{
+                                scale: ripple1.interpolate({
+                                    inputRange: [0, 1],
+                                    outputRange: [1, 1.7] // Softer max scale
+                                })
+                            }],
+                            opacity: ripple1.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [0.2, 0] // Linear fade out
+                            })
+                        }
+                    ]} />
+                    <Animated.View style={[
+                        styles.ripple,
+                        {
+                            transform: [{
+                                scale: ripple2.interpolate({
+                                    inputRange: [0, 1],
+                                    outputRange: [1, 1.7]
+                                })
+                            }],
+                            opacity: ripple2.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [0.2, 0]
+                            })
+                        }
+                    ]} />
 
-                    {/* Main Button with Scale Animation */}
+                    {/* ✅ Static Glow View for Centralized Bloom */}
+                    <View style={{ position: 'absolute', top: -20, left: -20, width: 240, height: 240, justifyContent: 'center', alignItems: 'center', zIndex: 0 }}>
+                        <Svg height="240" width="240" viewBox="0 0 240 240">
+                            <Defs>
+                                <RadialGradient id="grad" cx="120" cy="120" rx="120" ry="120" fx="120" fy="120" gradientUnits="userSpaceOnUse">
+                                    <Stop offset="0.3" stopColor={colors.orange} stopOpacity="0.4" />
+                                    <Stop offset="1" stopColor={colors.orange} stopOpacity="0" />
+                                </RadialGradient>
+                            </Defs>
+                            <Circle cx="120" cy="120" r="120" fill="url(#grad)" />
+                        </Svg>
+                    </View>
+
                     <Pressable
                         onPressIn={handlePressIn}
                         onPressOut={handlePressOut}
                         onPress={handleScanPress}
                     >
-                        <Animated.View style={[styles.heroButton, { transform: [{ scale: scaleValue }], backgroundColor: colors.orange, shadowColor: colors.orange }]}>
-                            <Ionicons name="camera" size={48} color="white" />
-                            <Text style={styles.heroText}>지금 사진을 찍거나</Text>
-                            <Text style={styles.heroText}>이미지를 올려보세요</Text>
+                        <Animated.View style={[styles.heroButton, { backgroundColor: colors.orange, transform: [{ scale: scaleValue }], shadowColor: colors.orange, shadowOpacity: 0.6, shadowRadius: 30, shadowOffset: { width: 0, height: 0 }, elevation: 0 }]}>
+                            <Ionicons name="camera" size={48} color={Colors.white} />
+                            <Text style={styles.heroButtonText}>지금 사진을 찍거나</Text>
+                            <Text style={styles.heroButtonText}>이미지를 올려보세요</Text>
                         </Animated.View>
                     </Pressable>
-                </View>
 
+                    {/* ✅ Voice Register CTA */}
+                    <TouchableOpacity
+                        onPress={() => router.push({ pathname: '/scan/universal', params: { mode: 'voice' } })}
+                        style={{ marginTop: 12, paddingVertical: 8, paddingHorizontal: 12 }}
+                    >
+                        <Text style={{ fontFamily: 'Pretendard-Medium', fontSize: 13, color: colors.orange, textDecorationLine: 'underline' }}>
+                            🎙️ 음성으로 등록하기
+                        </Text>
+                    </TouchableOpacity>
+                </View>
                 {/* Quick Links */}
                 <View style={styles.quickLinks}>
                     <TouchableOpacity
@@ -254,34 +302,26 @@ export default function Home() {
                     activeOpacity={0.8}
                 >
                     <View style={styles.reportHeader}>
-                        <Text style={[styles.reportTitle, { color: colors.text }]}>{new Date().getFullYear()}년 {new Date().getMonth() + 1}월 지출</Text>
+                        <View style={{ gap: 4 }}>
+                            <Text style={[styles.reportTitle, { color: colors.text }]}>{new Date().getFullYear()}년 {new Date().getMonth() + 1}월 지출</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
+                                <Text style={[styles.statValueOut, { color: colors.danger }]}>
+                                    -{stats.totalGiven.toLocaleString()}원
+                                </Text>
+                                {stats.pendingGiven > 0 && (
+                                    <Text style={{ fontSize: 13, color: colors.subText }}>
+                                        (송금 예정 {stats.pendingGiven.toLocaleString()}원)
+                                    </Text>
+                                )}
+                            </View>
+                            <Text style={[styles.pendingText, { color: stats.spendingDiff > 0 ? colors.danger : colors.success }]}>
+                                {stats.spendingDiff > 0 ? '▲' : '▼'} 지난달 대비 {Math.abs(stats.spendingDiff).toLocaleString()}원 {stats.spendingDiff > 0 ? '더 씀' : '덜 씀'}
+                            </Text>
+                        </View>
                         <Ionicons name="chevron-forward" size={18} color={colors.subText} />
                     </View>
 
                     <View style={styles.statsRow}>
-                        {/* Spending Column */}
-                        <View style={styles.statItem}>
-                            <Text style={[styles.statLabel, { color: colors.subText }]}>지출</Text>
-                            <Text style={[styles.statValueOut, { color: colors.danger }]}>
-                                -{Math.abs(stats.totalGiven).toLocaleString()}원
-                            </Text>
-                            {/* Pending & Comparison under Spending */}
-                            <View style={{ marginTop: 4 }}>
-                                {stats.pendingGiven > 0 && (
-                                    <Text style={{ fontSize: 12, color: colors.subText, marginBottom: 2 }}>
-                                        (송금 예정 {stats.pendingGiven.toLocaleString()}원)
-                                    </Text>
-                                )}
-                                <Text style={[styles.pendingText, { color: stats.spendingDiff > 0 ? colors.danger : colors.success }]}>
-                                    {stats.spendingDiff > 0 ? '▲' : '▼'} 지난달 대비 {Math.abs(stats.spendingDiff).toLocaleString()}원 {stats.spendingDiff > 0 ? '더 씀' : '덜 씀'}
-                                </Text>
-                            </View>
-                        </View>
-
-                        {/* Divider */}
-                        <View style={{ width: 1, backgroundColor: colors.border, marginHorizontal: 16 }} />
-
-                        {/* Income Column */}
                         <View style={styles.statItem}>
                             <Text style={[styles.statLabel, { color: colors.subText }]}>수입</Text>
                             <Text style={[styles.statValueIn, { color: colors.success }]}>+{stats.totalReceived.toLocaleString()}</Text>
@@ -431,34 +471,54 @@ const styles = StyleSheet.create({
     heroContainer: {
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 24, // 40 -> 24 줄임
-        width: 160, // 200 -> 160 줄임
-        height: 160,
+        marginBottom: 40, // 24 -> 40 복원 (Large)
+        width: 200, // 160 -> 200 복원 (Large)
+        height: 200,
     },
     ripple: {
         position: 'absolute',
-        width: 140, // 160 -> 140
-        height: 140,
-        borderRadius: 70, // 80 -> 70
-        backgroundColor: Colors.orange,
+        width: 160,
+        height: 160,
+        borderRadius: 80,
+        backgroundColor: Colors.orange, // Solid fill
+        top: 20,
+        left: 20,
+        zIndex: 0,
     },
     heroButton: {
-        width: 140, // 160 -> 140
-        height: 140,
-        borderRadius: 70, // 80 -> 70
+        width: 160, // 140 -> 160
+        height: 160,
+        borderRadius: 80, // 70 -> 80
         backgroundColor: Colors.orange,
         alignItems: 'center',
         justifyContent: 'center',
         shadowColor: Colors.orange,
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.5,
-        shadowRadius: 20,
-        elevation: 15,
+        shadowOffset: { width: 0, height: 0 }, // Centered Glow
+        shadowOpacity: 0.6,
+        shadowRadius: 30,
+        elevation: 0, // Android elevation Removed
         zIndex: 10,
+    },
+    staticGlow: {
+        position: 'absolute',
+        width: 190,
+        height: 190,
+        borderRadius: 95,
+        backgroundColor: Colors.orange,
+        opacity: 0.5,
+        zIndex: 0,
+    },
+    heroButtonText: {
+        fontFamily: 'Pretendard-Medium',
+        fontSize: 13,
+        color: Colors.white,
+        marginTop: 2,
+        textAlign: 'center',
+        lineHeight: 18,
     },
     heroText: {
         fontFamily: 'Pretendard-Medium',
-        fontSize: 12, // 13 -> 12
+        fontSize: 13, // 12 -> 13
         color: 'rgba(255,255,255,0.9)',
         marginTop: 4,
     },
