@@ -11,17 +11,25 @@ interface OcrContext {
     classifiedData?: any;
 }
 
+interface VoiceContext {
+    rawText?: string;
+    classifiedType?: string;
+    classifiedData?: any;
+    source?: string;
+}
+
 interface FeedbackModalProps {
     visible: boolean;
     onClose: () => void;
     ocrContext?: OcrContext; // OCR 결과 화면에서 전달되는 컨텍스트
+    voiceContext?: VoiceContext; // Voice ??? ?????? ?????? ??????
 }
 
-type FeedbackType = 'bug' | 'feature' | 'ocr' | 'other';
+type FeedbackType = 'bug' | 'feature' | 'ocr' | 'voice' | 'other';
 
-export function FeedbackModal({ visible, onClose, ocrContext }: FeedbackModalProps) {
+export function FeedbackModal({ visible, onClose, ocrContext, voiceContext }: FeedbackModalProps) {
     const { colors, isDark } = useTheme();
-    const [type, setType] = useState<FeedbackType>(ocrContext ? 'ocr' : 'feature');
+    const [type, setType] = useState<FeedbackType>(voiceContext ? 'voice' : ocrContext ? 'ocr' : 'feature');
     const [content, setContent] = useState('');
     const [loading, setLoading] = useState(false);
 
@@ -41,7 +49,7 @@ export function FeedbackModal({ visible, onClose, ocrContext }: FeedbackModalPro
                     user_id: user?.id,
                     type,
                     content,
-                    metadata: ocrContext ? JSON.stringify(ocrContext) : null
+                    metadata: voiceContext ? JSON.stringify(voiceContext) : ocrContext ? JSON.stringify(ocrContext) : null
                 });
 
             if (error) throw error;
@@ -97,6 +105,7 @@ export function FeedbackModal({ visible, onClose, ocrContext }: FeedbackModalPro
 
                     <Text style={[styles.label, { color: colors.text }]}>어떤 종류의 의견인가요?</Text>
                     <View style={styles.typeContainer}>
+                        {voiceContext && <TypeButton label="?? ?? ?? ??" value="voice" />}
                         {ocrContext && <TypeButton label="🔍 AI 분류 개선" value="ocr" />}
                         <TypeButton label="✨ 기능 제안" value="feature" />
                         <TypeButton label="🐛 버그 신고" value="bug" />
@@ -107,7 +116,7 @@ export function FeedbackModal({ visible, onClose, ocrContext }: FeedbackModalPro
                     <TextInput
                         style={[styles.input, { backgroundColor: colors.card, color: colors.text, borderColor: colors.border }]}
                         multiline
-                        placeholder={ocrContext ? "어떻게 분류되어야 하나요? (예: 이건 보험료 납부인데 입금으로 분류됐어요)" : "자유롭게 의견을 남겨주세요."}
+                        placeholder={voiceContext ? "?? ??? ?? ?????? (?: ??/??/??)" : ocrContext ? "어떻게 분류되어야 하나요? (예: 이건 보험료 납부인데 입금으로 분류됐어요)" : "자유롭게 의견을 남겨주세요."}
                         placeholderTextColor={colors.subText}
                         value={content}
                         onChangeText={setContent}

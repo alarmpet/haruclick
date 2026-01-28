@@ -23,6 +23,7 @@ import {
 } from 'react-native';
 import { Colors } from '../constants/Colors';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '../contexts/ThemeContext';
 
 import SpinnerTimePicker from './SpinnerTimePicker';
 import { saveUnifiedEvent, updateUnifiedEvent } from '../services/supabase';
@@ -80,6 +81,7 @@ const getEndHour = (startTime: string) => {
 };
 
 export function AddEventModal({ visible, onClose, onSaved, initialDate, initialCategory = 'schedule', editEvent }: AddEventModalProps) {
+    const { colors, isDark } = useTheme();
     const [category, setCategory] = useState<'ceremony' | 'todo' | 'schedule' | 'expense'>(initialCategory);
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(initialDate || new Date().toISOString().split('T')[0]);
@@ -438,7 +440,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
     const renderCeremonyUI = () => (
         <>
             {/* 경조사 종류 */}
-            <Text style={styles.label}>📋 경조사 종류</Text>
+            <Text style={[styles.label, { color: colors.subText }]}>📋 경조사 종류</Text>
             <View style={styles.ceremonyTypes}>
                 {CEREMONY_TYPES.map((type) => (
                     <TouchableOpacity
@@ -456,6 +458,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                         />
                         <Text style={[
                             styles.ceremonyTypeText,
+                            { color: colors.subText },
                             ceremonyType === type.key && { color: '#fff' },
                         ]}>
                             {type.label}
@@ -465,9 +468,9 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             </View>
 
             {/* 이름 */}
-            <Text style={styles.label}>👤 이름 (주인공)</Text>
+            <Text style={[styles.label, { color: colors.subText }]}>👤 이름 (주인공)</Text>
             <TextInput
-                style={styles.input}
+                style={[styles.input, { backgroundColor: colors.card, color: colors.text }]}
                 placeholder="예: 홍길동"
                 placeholderTextColor="#666"
                 value={title}
@@ -475,9 +478,9 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             />
 
             {/* 날짜 */}
-            <Text style={styles.label}>📅 날짜</Text>
+            <Text style={[styles.label, { color: colors.subText }]}>📅 날짜</Text>
             <TouchableOpacity style={styles.dateButton}>
-                <Text style={styles.dateText}>{formatDate(date)}</Text>
+                <Text style={[styles.dateText, { color: colors.text }]}>{formatDate(date)}</Text>
             </TouchableOpacity>
 
             {/* 시간 */}
@@ -494,22 +497,22 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
 
             <TouchableOpacity style={styles.row} onPress={() => !isAllDay && openTimePicker('start')}>
                 <View style={{ width: 24 }} />
-                <Text style={styles.rowText}>{formatDate(date)}</Text>
+                <Text style={[styles.rowText, { color: colors.text }]}>{formatDate(date)}</Text>
                 {!isAllDay && <Text style={styles.timeText}>{startTime}</Text>}
             </TouchableOpacity>
 
             {!isAllDay && (
                 <TouchableOpacity style={styles.row} onPress={() => openTimePicker('end')}>
                     <View style={{ width: 24 }} />
-                    <Text style={styles.rowText}>{formatDate(date)}</Text>
+                    <Text style={[styles.rowText, { color: colors.text }]}>{formatDate(date)}</Text>
                     <Text style={styles.timeText}>{endTime}</Text>
                 </TouchableOpacity>
             )}
 
             {/* 장소 */}
-            <Text style={styles.label}>📍 장소</Text>
+            <Text style={[styles.label, { color: colors.subText }]}>📍 장소</Text>
             <TextInput
-                style={styles.input}
+                style={[styles.input, { backgroundColor: colors.card, color: colors.text }]}
                 placeholder="예: 더파티움 웨딩홀"
                 placeholderTextColor="#666"
                 value={location}
@@ -517,7 +520,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             />
 
             {/* 관계 */}
-            <Text style={styles.label}>👥 관계</Text>
+            <Text style={[styles.label, { color: colors.subText }]}>👥 관계</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.relationScroll}>
                 {RELATIONS.map((rel) => (
                     <TouchableOpacity
@@ -542,10 +545,10 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             {recommendation && (
                 <View style={styles.recommendationBox}>
                     <Text style={styles.recommendationTitle}>💡 AI 추천 금액</Text>
-                    <Text style={styles.recommendationAmount}>
+                    <Text style={[styles.recommendationAmount, { color: colors.text }]}>
                         {recommendation.recommendedAmount.toLocaleString()}원
                     </Text>
-                    <Text style={styles.recommendationReason}>{recommendation.reason}</Text>
+                    <Text style={[styles.recommendationReason, { color: colors.subText }]}>{recommendation.reason}</Text>
                     <TouchableOpacity style={styles.applyButton} onPress={applyRecommendation}>
                         <Text style={styles.applyButtonText}>적용</Text>
                     </TouchableOpacity>
@@ -553,23 +556,23 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             )}
 
             {/* 금액 입력 */}
-            <Text style={styles.label}>💰 금액</Text>
+            <Text style={[styles.label, { color: colors.subText }]}>💰 금액</Text>
             <View style={styles.amountRow}>
                 <TextInput
-                    style={styles.amountInput}
+                    style={[styles.amountInput, { color: colors.text }]}
                     value={amount}
                     onChangeText={setAmount}
                     keyboardType="number-pad"
                     placeholder="100000"
                     placeholderTextColor="#666"
                 />
-                <Text style={styles.wonText}>원</Text>
+                <Text style={[styles.wonText, { color: colors.text }]}>원</Text>
             </View>
 
             {/* 메모 */}
-            <Text style={styles.label}>📝 메모</Text>
+            <Text style={[styles.label, { color: colors.subText }]}>📝 메모</Text>
             <TextInput
-                style={[styles.input, { height: 80 }]}
+                style={[styles.input, { backgroundColor: colors.card, color: colors.text, height: 80 }]}
                 placeholder="추가 메모..."
                 placeholderTextColor="#666"
                 value={memo}
@@ -584,7 +587,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
         <>
             {/* 제목 */}
             <TextInput
-                style={styles.titleInput}
+                style={[styles.titleInput, { color: colors.text }]}
                 placeholder="제목 추가"
                 placeholderTextColor="#888"
                 value={title}
@@ -606,14 +609,14 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             {/* 날짜/시간 */}
             <TouchableOpacity style={styles.row} onPress={() => !isAllDay && openTimePicker('start')}>
                 <View style={{ width: 24 }} />
-                <Text style={styles.rowText}>{formatDate(date)}</Text>
+                <Text style={[styles.rowText, { color: colors.text }]}>{formatDate(date)}</Text>
                 {!isAllDay && <Text style={styles.timeText}>{startTime}</Text>}
             </TouchableOpacity>
 
             {!isAllDay && (
                 <TouchableOpacity style={styles.row} onPress={() => openTimePicker('end')}>
                     <View style={{ width: 24 }} />
-                    <Text style={styles.rowText}>{formatDate(date)}</Text>
+                    <Text style={[styles.rowText, { color: colors.text }]}>{formatDate(date)}</Text>
                     <Text style={styles.timeText}>{endTime}</Text>
                 </TouchableOpacity>
             )}
@@ -638,7 +641,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             <View style={styles.row}>
                 <Ionicons name="location-outline" size={24} color="#888" />
                 <TextInput
-                    style={styles.locationInput}
+                    style={[styles.locationInput, { color: colors.text }]}
                     placeholder="위치 추가"
                     placeholderTextColor="#888"
                     value={location}
@@ -699,11 +702,11 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             {/* 날짜 */}
             <TouchableOpacity style={styles.row} onPress={() => !isAllDay && openTimePicker('start')}>
                 <Ionicons name="calendar-outline" size={24} color="#888" />
-                <Text style={styles.rowText}>{formatDate(date)}</Text>
+                <Text style={[styles.rowText, { color: colors.text }]}>{formatDate(date)}</Text>
             </TouchableOpacity>
 
             {/* 금액 입력 */}
-            <Text style={styles.label}>💰 금액</Text>
+            <Text style={[styles.label, { color: colors.subText }]}>💰 금액</Text>
             <View style={styles.amountRow}>
                 <TextInput
                     style={[styles.amountInput, { color: ledgerGroup === 'income' ? '#4A90D9' : '#FF6B6B' }]}
@@ -713,13 +716,13 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                     placeholder="0"
                     placeholderTextColor="#666"
                 />
-                <Text style={styles.wonText}>원</Text>
+                <Text style={[styles.wonText, { color: colors.text }]}>원</Text>
             </View>
 
             {/* 내역 (제목) */}
-            <Text style={styles.label}>📝 내역</Text>
+            <Text style={[styles.label, { color: colors.subText }]}>📝 내역</Text>
             <TextInput
-                style={styles.input}
+                style={[styles.input, { backgroundColor: colors.card, color: colors.text }]}
                 placeholder={ledgerGroup === 'income' ? "입금처 (예: 월급)" : "사용처 (예: 스타벅스)"}
                 placeholderTextColor="#666"
                 value={title}
@@ -727,7 +730,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             />
 
             {/* 분류 (카테고리) - 선택된 그룹에 맞는 것만 표시 */}
-            <Text style={styles.label}>📂 분류</Text>
+            <Text style={[styles.label, { color: colors.subText }]}>📂 분류</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.relationScroll}>
                 {getReviewCategoryList(ledgerGroup).map((catSpec) => (
                     <TouchableOpacity
@@ -768,14 +771,14 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
         <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
             <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                style={styles.container}
+                style={[styles.container, { backgroundColor: colors.background }]}
             >
                 {/* 헤더 */}
-                <View style={styles.header}>
+                <View style={[styles.header, { backgroundColor: colors.background }]}>
                     <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-                        <Ionicons name="close" size={24} color="#fff" />
+                        <Ionicons name="close" size={24} color={colors.text} />
                     </TouchableOpacity>
-                    <Text style={styles.headerTitle}>
+                    <Text style={[styles.headerTitle, { color: colors.text }]}>
                         {editEvent ? '일정 수정' : (category === 'ceremony' ? '경조사 추가' : category === 'todo' ? '할일 추가' : '일정 추가')}
                     </Text>
                     <TouchableOpacity

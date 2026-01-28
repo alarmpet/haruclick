@@ -1,4 +1,4 @@
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { Colors } from '../constants/Colors';
 
@@ -45,8 +45,11 @@ export default function SpinnerTimePicker({ hour, minute, onChange }: SpinnerTim
         lastHourIndexRef.current = initialHourIndex;
     }
 
+    const keyExtractorText = useCallback((item: string) => item, []);
+    const keyExtractorIndex = useCallback((_: number, index: number) => `${index}`, []);
+
     // 3. Render Item
-    const renderItem = ({ item, index, type }) => {
+    const renderItem = useCallback(({ item, index, type }: { item: number | string; index: number; type: 'ampm' | 'hour' | 'minute' }) => {
         let isSelected = false;
         if (type === 'ampm') {
             isSelected = ((index === 0 && !isPm) || (index === 1 && isPm));
@@ -63,7 +66,19 @@ export default function SpinnerTimePicker({ hour, minute, onChange }: SpinnerTim
                 </Text>
             </View>
         );
-    };
+    }, [displayHour12, isPm, minute]);
+
+    const renderAmpmItem = useCallback(({ item, index }: { item: string; index: number }) => (
+        renderItem({ item, index, type: 'ampm' })
+    ), [renderItem]);
+
+    const renderHourItem = useCallback(({ item, index }: { item: number; index: number }) => (
+        renderItem({ item, index, type: 'hour' })
+    ), [renderItem]);
+
+    const renderMinuteItem = useCallback(({ item, index }: { item: number; index: number }) => (
+        renderItem({ item, index, type: 'minute' })
+    ), [renderItem]);
 
     // 4. Scroll Handler
     const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>, type: 'ampm' | 'hour' | 'minute') => {
@@ -111,8 +126,8 @@ export default function SpinnerTimePicker({ hour, minute, onChange }: SpinnerTim
             <View style={styles.column}>
                 <FlatList
                     data={AMPM}
-                    keyExtractor={(item) => item}
-                    renderItem={({ item, index }) => renderItem({ item, index, type: 'ampm' })}
+                    keyExtractor={keyExtractorText}
+                    renderItem={renderAmpmItem}
                     snapToInterval={ITEM_HEIGHT}
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={{ paddingVertical: ITEM_HEIGHT * (VISIBLE_ITEMS - 1) / 2 }}
@@ -127,8 +142,8 @@ export default function SpinnerTimePicker({ hour, minute, onChange }: SpinnerTim
             <View style={styles.column}>
                 <FlatList
                     data={HOURS_DATA}
-                    keyExtractor={(item, index) => `${index}`}
-                    renderItem={({ item, index }) => renderItem({ item, index, type: 'hour' })}
+                    keyExtractor={keyExtractorIndex}
+                    renderItem={renderHourItem}
                     snapToInterval={ITEM_HEIGHT}
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={{ paddingVertical: ITEM_HEIGHT * (VISIBLE_ITEMS - 1) / 2 }}
@@ -148,8 +163,8 @@ export default function SpinnerTimePicker({ hour, minute, onChange }: SpinnerTim
             <View style={styles.column}>
                 <FlatList
                     data={MINUTES_DATA}
-                    keyExtractor={(item, index) => `${index}`}
-                    renderItem={({ item, index }) => renderItem({ item, index, type: 'minute' })}
+                    keyExtractor={keyExtractorIndex}
+                    renderItem={renderMinuteItem}
                     snapToInterval={ITEM_HEIGHT}
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={{ paddingVertical: ITEM_HEIGHT * (VISIBLE_ITEMS - 1) / 2 }}

@@ -173,9 +173,9 @@ export default function SettingsScreen() {
             <View style={[styles.section, { backgroundColor: colors.card }]}>
                 <Text style={[styles.sectionTitle, { color: colors.subText }]}>내 자산</Text>
                 <SettingItem
-                    icon="gift-outline"
-                    label="기프티콘 보관함"
-                    onPress={() => router.push('/gifticon')}
+                    icon="heart-outline"
+                    label="마음 보관함"
+                    onPress={() => router.push('/relationship-ledger')}
                 />
             </View>
 

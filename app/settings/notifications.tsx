@@ -9,7 +9,6 @@ const NOTIFICATION_SETTINGS_KEY = '@haruclick_notification_settings';
 
 interface NotificationSettings {
     eventReminder: boolean;
-    gifticonExpiry: boolean;
     reciprocity: boolean;
     communityPoll: boolean;
     marketing: boolean;
@@ -17,7 +16,6 @@ interface NotificationSettings {
 
 const defaultSettings: NotificationSettings = {
     eventReminder: true,
-    gifticonExpiry: true,
     reciprocity: true,
     communityPoll: false,
     marketing: false,
@@ -36,7 +34,8 @@ export default function NotificationSettingsScreen() {
         try {
             const saved = await AsyncStorage.getItem(NOTIFICATION_SETTINGS_KEY);
             if (saved) {
-                setSettings(JSON.parse(saved));
+                const parsed = JSON.parse(saved);
+                setSettings({ ...defaultSettings, ...parsed });
             }
         } catch (error) {
             console.error('Failed to load notification settings:', error);
@@ -124,17 +123,6 @@ export default function NotificationSettingsScreen() {
                     description="축의금 받은 분의 경조사 알림"
                     value={settings.reciprocity}
                     onToggle={() => toggleSetting('reciprocity')}
-                />
-            </View>
-
-            <View style={styles.section}>
-                <Text style={styles.sectionTitle}>기프티콘 알림</Text>
-                <SettingRow
-                    icon="gift-outline"
-                    title="유효기간 임박 알림"
-                    description="만료 7일 전, 3일 전, 1일 전 알림"
-                    value={settings.gifticonExpiry}
-                    onToggle={() => toggleSetting('gifticonExpiry')}
                 />
             </View>
 

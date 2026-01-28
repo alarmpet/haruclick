@@ -1,53 +1,76 @@
-import { supabase, invalidateCache } from './client';
+﻿import { supabase, invalidateUserScopedCache } from './client';
 import { scheduleEventNotification } from '../notifications';
 import { classifyMerchant } from '../CategoryClassifier';
 import { validateCategory } from '../CategoryValidator';
-import { ScannedData, StorePaymentResult, BankTransactionResult, InvitationResult, GifticonResult, TransferResult, ReceiptResult, BillResult, SocialResult, AppointmentResult } from '../ai/OpenAIService';
+import { ScannedData, StorePaymentResult, BankTransactionResult, InvitationResult, TransferResult, ReceiptResult, BillResult, SocialResult, AppointmentResult } from '../ai/OpenAIService';
 import { CATEGORY_MAP, CategoryGroupType } from '../../constants/categories';
 
 /**
- * AI에서 반환된 날짜 형식 (예: "2023-01-11 18:35")을 
- * Supabase timestamp 형식 (ISO 8601)으로 변환합니다.
- * 연도가 과거(2024 이전)이면 현재 연도로 자동 변환합니다.
+ * AI returns date format (e.g. "2023-01-11 18:35").
+ * Convert to Supabase timestamp format (ISO 8601).
+ * If year is past (before 2024), convert to current year.
  */
 function toISODate(dateStr: string | undefined): string {
     if (!dateStr) return new Date().toISOString();
 
-    // "YYYY-MM-DD HH:mm" 형식을 "YYYY-MM-DDTHH:mm:00" ISO 형식으로 변환
+    // Convert "YYYY-MM-DD HH:mm" to "YYYY-MM-DDTHH:mm:00" ISO format
     const cleaned = dateStr.replace(' ', 'T');
 
-    // 유효한 날짜인지 확인
+    // Check if date is valid
     let parsed = new Date(cleaned);
     if (isNaN(parsed.getTime())) {
-        console.warn('[toISODate] 날짜 파싱 실패:', dateStr, '-> 현재 시간 사용');
+        console.warn('[toISODate] Date parsing failed:', dateStr, '-> Using current time');
         return new Date().toISOString();
     }
 
-    // 연도가 2024 이전이면 현재 연도로 변환 (AI가 연도를 잘못 추측하는 경우 대비)
+    // If year is before 2024, convert to current year (AI often guesses year wrong)
     const currentYear = new Date().getFullYear();
     if (parsed.getFullYear() < 2024) {
-        console.warn('[toISODate] 과거 연도 감지:', parsed.getFullYear(), '-> 현재 연도로 변환:', currentYear);
+        console.warn('[toISODate] Past year detected:', parsed.getFullYear(), '-> Converting to current year', currentYear);
         parsed.setFullYear(currentYear);
     }
 
     return parsed.toISOString();
 }
 
+function splitDateTime(dateStr?: string): { date: string; time?: string | null } {
+    const raw = (dateStr || '').trim();
+    if (!raw) {
+        return { date: new Date().toISOString().split('T')[0], time: null };
+    }
+
+    const match = raw.match(/(\d{2,4}[./-]\d{1,2}[./-]\d{1,2})(?:[ Tt]*(\d{1,2}:\d{2}))?/);
+    if (match) {
+        let datePart = match[1].replace(/[./]/g, '-');
+        if (/^\d{2}-/.test(datePart) && !/^\d{4}-/.test(datePart)) {
+            datePart = `20${datePart}`;
+        }
+        const timePart = match[2] ?? null;
+        const normalizedDate = toISODate(datePart).split('T')[0];
+        return { date: normalizedDate, time: timePart };
+    }
+
+    const iso = toISODate(raw);
+    const [datePart] = iso.split('T');
+    const timePart = raw.match(/(\d{1,2}:\d{2})/)?.[1] ?? null;
+    return { date: datePart, time: timePart };
+}
+
 /**
- * 카테고리 그룹을 결정하는 헬퍼 함수
+ * Helper function to determine category group
  */
 function determineCategoryGroup(category: string | undefined, type?: string): CategoryGroupType {
     if (!category) return 'variable_expense'; // Default
 
-    // 1. 직접 매핑 확인
+    // 1. Check direct mapping
     if (CATEGORY_MAP[category]) {
         return CATEGORY_MAP[category].group;
     }
 
-    // 2. 수입/이체 키워드 확인
-    if (category.includes('수입') || category.includes('용돈') || category.includes('급여')) return 'income';
-    if (category.includes('이체') || category.includes('저축') || category.includes('투자')) return 'asset_transfer';
-    if (category.includes('고정') || category.includes('공과금') || category.includes('월세')) return 'fixed_expense';
+    // 2. Keyword-based group inference
+    if (category.includes('수입') || category.includes('입금') || category.includes('급여')) return 'income';
+    if (category.includes('이체') || category.includes('송금') || category.includes('자산')) return 'asset_transfer';
+    if (category.includes('고정') || category.includes('공과금') || category.includes('세금')) return 'fixed_expense';
 
     return 'variable_expense';
 }
@@ -64,11 +87,11 @@ export async function saveUnifiedEvent(
         isAllDay?: boolean;
     }
 ): Promise<void> {
-    console.log('[saveUnifiedEvent] 함수 시작', options);
+    console.log('[saveUnifiedEvent] Function start', options);
+    let userId: string | null = null;
     try {
-        console.log('[saveUnifiedEvent] getUser 호출 중...');
+        console.log('[saveUnifiedEvent] Calling getUser...');
 
-        let userId: string | null = null;
         try {
             const userPromise = supabase.auth.getUser();
             const timeoutPromise = new Promise((_, reject) =>
@@ -77,20 +100,20 @@ export async function saveUnifiedEvent(
             const { data: { user } } = await Promise.race([userPromise, timeoutPromise]) as any;
             userId = user?.id || null;
         } catch (authError) {
-            console.warn('[saveUnifiedEvent] getUser 실패 또는 타임아웃:', authError);
+            console.warn('[saveUnifiedEvent] getUser failed or timeout', authError);
             userId = null;
         }
 
-        console.log('[saveUnifiedEvent] 저장 시작:', data.type, '유저:', userId ? '로그인됨' : '비로그인');
+        console.log('[saveUnifiedEvent] Save start:', data.type, 'User:', userId ? 'Logged in' : 'Not logged in');
 
         if (!userId) {
             throw new Error('로그인이 필요합니다. 다시 로그인해주세요.');
         }
 
         if (data.type === 'APPOINTMENT' || data.type === 'UNKNOWN') {
-            // ✅ Handle APPOINTMENT (Schedule/Todo)
+            // Handle APPOINTMENT (Schedule/Todo)
             const appointment = data as AppointmentResult;
-            console.log('[saveUnifiedEvent] APPOINTMENT 저장 시작:', appointment.title || '제목 없음');
+            console.log('[saveUnifiedEvent] APPOINTMENT Save start:', appointment.title || 'No title');
 
             // Safe date conversion: Ensure we don't pick up just a time string
             let eventDateStr = appointment.date;
@@ -100,7 +123,9 @@ export async function saveUnifiedEvent(
                 eventDateStr = new Date().toISOString().split('T')[0];
             }
 
-            const safeEventDate = toISODate(eventDateStr).split('T')[0];
+            const { date: safeEventDate, time: parsedTime } = splitDateTime(eventDateStr);
+            const resolvedStartTime = options?.startTime || parsedTime || null;
+            const resolvedEndTime = options?.endTime || null;
 
             const { error } = await supabase.from('events').insert({
                 user_id: userId,
@@ -110,8 +135,8 @@ export async function saveUnifiedEvent(
                 category: options?.category || 'schedule',
                 location: appointment.location || (options?.category === 'todo' ? undefined : ''),
                 memo: appointment.memo || '',
-                start_time: options?.startTime || null,
-                end_time: options?.endTime || null,
+                start_time: resolvedStartTime,
+                end_time: resolvedEndTime,
                 is_all_day: options?.isAllDay || false,
                 recurrence_rule: options?.recurrence || 'none', // Fixed column name from recurrence to recurrence_rule
                 alarm_minutes: options?.alarmMinutes,
@@ -120,7 +145,7 @@ export async function saveUnifiedEvent(
             if (error) throw error;
         } else if (data.type === 'INVITATION') {
             const invite = data as InvitationResult;
-            console.log('[saveUnifiedEvent] INVITATION 저장 시작:', JSON.stringify({
+            console.log('[saveUnifiedEvent] INVITATION Save start:', JSON.stringify({
                 eventDate: invite.eventDate,
                 eventType: invite.eventType,
                 senderName: invite.senderName,
@@ -129,14 +154,16 @@ export async function saveUnifiedEvent(
                 relation: invite.relation
             }));
 
-            // ✅ 날짜 유효성 검사
+            // Date validation check
             if (!invite.eventDate || invite.eventDate === '날짜 없음') {
                 throw new Error('청첩장에 유효한 날짜 정보가 없습니다. 날짜를 직접 입력해주세요.');
             }
 
-            // ✅ 안전한 날짜 변환 (toISODate 헬퍼 사용)
-            const safeEventDate = toISODate(invite.eventDate).split('T')[0];
-            console.log('[saveUnifiedEvent] 변환된 날짜:', safeEventDate);
+            // Safe date conversion (use toISODate helper)
+            const { date: safeEventDate, time: parsedTime } = splitDateTime(invite.eventDate);
+            const resolvedStartTime = options?.startTime || parsedTime || null;
+            const resolvedEndTime = options?.endTime || null;
+            console.log('[saveUnifiedEvent] Converted date:', safeEventDate);
 
             // Recurrence Setup
             const groupId = options?.recurrence && options.recurrence !== 'none'
@@ -151,7 +178,7 @@ export async function saveUnifiedEvent(
             }
 
             for (let i = 0; i < repeatCount; i++) {
-                // 날짜 계산
+                // Date calculation
                 const currentDate = new Date(safeEventDate);
                 if (i > 0) {
                     if (options?.recurrence === 'daily') currentDate.setDate(currentDate.getDate() + i);
@@ -167,6 +194,7 @@ export async function saveUnifiedEvent(
                     invite.hostNames?.[0] ||
                     invite.eventLocation ||
                     '이름 없음';
+
                 const insertData = {
                     user_id: userId,
                     type: invite.eventType || 'wedding',
@@ -180,67 +208,42 @@ export async function saveUnifiedEvent(
                     recurrence_rule: options?.recurrence || null,
                     group_id: groupId,
                     alarm_minutes: options?.alarmMinutes || null,
-                    start_time: options?.startTime || null,
-                    end_time: options?.endTime || null,
+                    start_time: resolvedStartTime,
+                    end_time: resolvedEndTime,
                     is_all_day: options?.isAllDay ?? false
                 };
-                console.log('[saveUnifiedEvent] INSERT 데이터:', JSON.stringify(insertData));
+                console.log('[saveUnifiedEvent] INSERT data:', JSON.stringify(insertData));
 
                 const { error: eventError } = await supabase.from('events').insert(insertData);
 
                 if (eventError) {
-                    console.error('[saveUnifiedEvent] INVITATION INSERT 실패:', eventError);
+                    console.error('[saveUnifiedEvent] INVITATION INSERT Failed:', eventError);
                     throw new Error(`청첩장 저장 실패: ${eventError.message || eventError.code || JSON.stringify(eventError)}`);
                 }
 
-                // 알림 스케줄링 (20개까지만 제한)
+                // Schedule alarm (Limit to 20)
                 if (options?.alarmMinutes && i < 20) {
                     await scheduleEventNotification(
                         invite.senderName || invite.mainName || '일정',
                         currentDateStr,
-                        undefined, // TODO: 시간 정보가 있다면 여기에 추가
+                        resolvedStartTime || undefined,
                         options.alarmMinutes
                     );
                 }
             }
-            console.log('[saveUnifiedEvent] INVITATION 저장 완료');
+            console.log('[saveUnifiedEvent] INVITATION Save complete');
         }
 
-        if (data.type === 'GIFTICON') {
-            const gift = data as GifticonResult;
-            console.log('[saveUnifiedEvent] gifticons 테이블 INSERT 시도...');
-            const { error: giftError } = await supabase.from('gifticons').insert({
-                user_id: userId,
-                product_name: gift.productName,
-                sender_name: gift.senderName,
-                expiry_date: gift.expiryDate,
-                image_url: imageUrl,
-                estimated_price: gift.estimatedPrice,
-                status: 'available'
-            });
-            if (giftError) throw giftError;
-
-            const { error: eventError } = await supabase.from('events').insert({
-                user_id: userId,
-                type: 'gift',
-                name: gift.senderName,
-                event_date: new Date().toISOString(),
-                amount: gift.estimatedPrice,
-                is_received: true,
-                memo: `[기프티콘] ${gift.productName}`
-            });
-            if (eventError) throw eventError;
-
-        } else if (data.type === 'STORE_PAYMENT') {
+        if (data.type === 'STORE_PAYMENT') {
             const pay = data as StorePaymentResult;
-            console.log('[saveUnifiedEvent] ledger 테이블 INSERT 시도...');
+            console.log('[saveUnifiedEvent] ledger Table INSERT attempt...');
             const rawCategory = pay.category || classifyMerchant(pay.merchant);
             const validated = validateCategory(rawCategory, (pay as any).subCategory);
 
             const { error } = await supabase.from('ledger').insert({
                 user_id: userId,
                 transaction_date: toISODate(pay.date),
-                amount: pay.amount,
+                amount: pay.amount || 0, // Default to 0 if missing (Voice/Text fallback)
                 merchant_name: pay.merchant,
                 category: validated.category,
                 sub_category: validated.subCategory,
@@ -250,14 +253,15 @@ export async function saveUnifiedEvent(
                 raw_text: JSON.stringify(data)
             });
             if (error) throw error;
-            console.log('[saveUnifiedEvent] ledger INSERT 성공!');
+            console.log('[saveUnifiedEvent] ledger INSERT Success!');
 
 
         } else if (data.type === 'BANK_TRANSFER') {
+            // FIX: Prevent block splitting leading to wrong type detection? No, handled in ocr.ts
             const trans = data as BankTransactionResult;
 
             if ((trans as any).isUtility) {
-                // 공과금/고정지출 -> Ledger로 저장
+                // Utilities/Fixed Expenses -> Ledger
                 const rawCategory = (trans as any).category || (classifyMerchant(trans.targetName) === '기타' ? '주거/통신/광열' : classifyMerchant(trans.targetName));
                 const validated = validateCategory(rawCategory, (trans as any).subCategory);
 
@@ -275,7 +279,7 @@ export async function saveUnifiedEvent(
                 });
                 if (error) throw error;
             } else {
-                // 순수 이체/인맥 거래 -> Bank Transactions로 저장
+                // Personal Transfer/Remittance -> Bank Transactions
                 const { error } = await supabase.from('bank_transactions').insert({
                     user_id: userId,
                     transaction_date: toISODate(trans.date),
@@ -284,7 +288,7 @@ export async function saveUnifiedEvent(
                     sender_name: trans.transactionType === 'deposit' ? trans.targetName : null,
                     receiver_name: trans.transactionType === 'withdrawal' ? trans.targetName : null,
                     balance_after: trans.balanceAfter,
-                    category: (trans as any).category || '인맥',
+                    category: (trans as any).category || '이체',
                     sub_category: (trans as any).subCategory,
                     memo: trans.memo || (trans.transactionType === 'deposit' ? `${trans.targetName} 입금` : `${trans.targetName} 송금`),
                     raw_text: JSON.stringify(data)
@@ -303,7 +307,7 @@ export async function saveUnifiedEvent(
                 amount: transfer.amount,
                 merchant_name: transfer.senderName,
                 category: category,
-                category_group: categoryGroup, // ✅ New field
+                category_group: categoryGroup, // New field
                 memo: (transfer as any).memo || `[송금] ${(transfer as any).isReceived ? '받음' : '보냄'}`,
                 image_url: imageUrl
             });
@@ -311,7 +315,7 @@ export async function saveUnifiedEvent(
 
 
             // ===================================
-            // 4. 기존: 영수증 (RECEIPT) -> Ledger (Legacy support)
+            // 4. Legacy: Receipt -> Ledger
             // ===================================
         } else if ((data as any).type === 'RECEIPT') {
             const receipt = data as unknown as ReceiptResult;
@@ -324,8 +328,8 @@ export async function saveUnifiedEvent(
                 amount: receipt.amount,
                 merchant_name: receipt.merchant,
                 category: category,
-                sub_category: (receipt as any).subCategory, // ✅ 소분류 추가
-                category_group: categoryGroup, // ✅ New field
+                sub_category: (receipt as any).subCategory, // Add subCategory
+                category_group: categoryGroup, // New field
                 image_url: imageUrl,
                 memo: `[자동입력] ${category}`
             });
@@ -341,7 +345,7 @@ export async function saveUnifiedEvent(
                 amount: bill.amount,
                 is_received: false,
                 category: 'todo',
-                memo: `[고지서] 가상계좌: ${bill.virtualAccount || '미입력'}`,
+                memo: `[고지서 가상계좌 ${bill.virtualAccount || '미입력'}]`,
                 is_completed: false
             });
             if (error) throw error;
@@ -354,9 +358,9 @@ export async function saveUnifiedEvent(
                 amount: social.amount,
                 merchant_name: social.location || '모임 장소',
                 category: '식비',
-                category_group: 'variable_expense', // ✅ Default for social meal
+                category_group: 'variable_expense', // Default for social meal
                 image_url: imageUrl,
-                memo: `[인맥지출] 멤버: ${social.members.join(', ')}`
+                memo: `[소셜/지출] 멤버: ${social.members.join(', ')}`
             });
             if (error) throw error;
 
@@ -367,7 +371,7 @@ export async function saveUnifiedEvent(
         throw e;
     }
 
-    // ✅ Invalidate cache after successful save
-    invalidateCache();
+    // Invalidate cache after successful save
+    invalidateUserScopedCache(['upcoming_', 'stats_'], userId);
     console.log('[saveUnifiedEvent] Cache invalidated');
 }

@@ -14,7 +14,6 @@ export interface FinalConfidenceResult {
 
 // ?렞 Mandatory Fields Definition
 const MANDATORY_FIELDS: Record<ScanType, string[]> = {
-    GIFTICON: ['productName', 'expiryDate'], // Removed brandName as mandatory for practical reasons
     INVITATION: ['eventDate', 'eventLocation'],
     OBITUARY: ['deceased', 'funeralLocation', 'eventDate'],
     STORE_PAYMENT: ['amount', 'merchant', 'date'],
@@ -87,13 +86,13 @@ export function calculateFinalConfidence(
     let c_consist = 1.0;
 
     // Date Format Check (ISO YYYY-MM-DD)
-    const dateField = (aiResult as any).date || (aiResult as any).eventDate || (aiResult as any).expiryDate || (aiResult as any).dueDate;
+    const dateField = (aiResult as any).date || (aiResult as any).eventDate || (aiResult as any).dueDate;
     if (dateField && !/^\d{4}-\d{2}-\d{2}$/.test(dateField)) {
         c_consist -= 0.15;
     }
 
     // Amount Sanity Check (>0)
-    const amountField = (aiResult as any).amount || (aiResult as any).estimatedPrice;
+    const amountField = (aiResult as any).amount;
     if (typeof amountField === 'number' && amountField <= 0) {
         c_consist -= 0.15;
     }

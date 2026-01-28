@@ -10,27 +10,37 @@ export default function CommunityScreen() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
-    useEffect(() => {
-        loadPolls();
-    }, []);
-
-    const loadPolls = async () => {
+    const loadPolls = useCallback(async () => {
         setLoading(true);
         const data = await PollService.getActivePolls();
         setPolls(data);
         setLoading(false);
-    };
+    }, []);
+
+    useEffect(() => {
+        loadPolls();
+    }, [loadPolls]);
 
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
         await loadPolls();
         setRefreshing(false);
-    }, []);
+    }, [loadPolls]);
 
-    const handleVoteSubmitted = () => {
+    const handleVoteSubmitted = useCallback(() => {
         // Optionally reload polls to get updated vote counts
         loadPolls();
-    };
+    }, [loadPolls]);
+
+    const renderItem = useCallback(({ item }: { item: Poll }) => (
+        <PollCard
+            poll={item}
+            onVoteSubmitted={handleVoteSubmitted}
+            onDeleted={loadPolls}
+        />
+    ), [handleVoteSubmitted, loadPolls]);
+
+    const keyExtractor = useCallback((item: Poll) => item.id, []);
 
     if (loading) {
         return (
@@ -59,14 +69,12 @@ export default function CommunityScreen() {
                 {/* Poll List */}
                 <FlatList
                     data={polls}
-                    keyExtractor={(item) => item.id}
-                    renderItem={({ item }) => (
-                        <PollCard
-                            poll={item}
-                            onVoteSubmitted={handleVoteSubmitted}
-                            onDeleted={loadPolls}  // ✅ 삭제 후 목록 새로고침
-                        />
-                    )}
+                    keyExtractor={keyExtractor}
+                    renderItem={renderItem}
+                    initialNumToRender={6}
+                    windowSize={5}
+                    maxToRenderPerBatch={10}
+                    removeClippedSubviews
                     contentContainerStyle={styles.listContent}
                     refreshControl={
                         <RefreshControl
@@ -81,7 +89,7 @@ export default function CommunityScreen() {
                             <Text style={styles.emptyIcon}>🤔</Text>
                             <Text style={styles.emptyTitle}>아직 투표가 없어요</Text>
                             <Text style={styles.emptyText}>
-                                기프티콘 분석 후{'\n'}
+                                분석 결과 화면에서{'\n'}
                                 "익명으로 의견 물어보기"를 눌러{'\n'}
                                 첫 투표를 시작해보세요!
                             </Text>

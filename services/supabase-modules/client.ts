@@ -47,6 +47,7 @@ interface CacheEntry<T> {
 
 const CACHE_TTL_MS = 30000; // 30 seconds
 const cache: Map<string, CacheEntry<any>> = new Map();
+const inflight: Map<string, Promise<any>> = new Map();
 
 export function getCached<T>(key: string): T | null {
     const entry = cache.get(key);
@@ -70,6 +71,24 @@ export function invalidateCache(prefix?: string): void {
     } else {
         cache.clear();
     }
+}
+
+export function withInflight<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+    const existing = inflight.get(key) as Promise<T> | undefined;
+    if (existing) return existing;
+    const promise = fetcher().finally(() => {
+        inflight.delete(key);
+    });
+    inflight.set(key, promise);
+    return promise;
+}
+
+export function invalidateUserScopedCache(prefixes: string[], userId?: string | null): void {
+    if (userId) {
+        prefixes.forEach((prefix) => invalidateCache(`${prefix}${userId}_`));
+        return;
+    }
+    prefixes.forEach((prefix) => invalidateCache(prefix));
 }
 
 export async function testConnection() {

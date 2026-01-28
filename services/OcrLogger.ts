@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
 import { maskPIIInObject } from './piiMasking';
 
-export type OcrStage = 'ml_kit' | 'openai_text' | 'google_vision' | 'openai_vision';
+export type OcrStage = 'ml_kit' | 'openai_text' | 'google_vision' | 'openai_vision' | 'voice_local' | 'voice_whisper' | 'voice_confirm';
 
 export type FallbackReason =
     | 'short_text'
@@ -17,6 +17,18 @@ export type FallbackReason =
     | 'stage2_exception'
     | 'vision_exception'
     | 'unknown_type'
+    | 'voice_init_failed'
+    | 'voice_timeout'
+    | 'voice_network_error'
+    | 'voice_no_match'
+    | 'voice_error'         // New
+    | 'permission_denied'   // New
+    | 'no_entity'           // New
+    | 'analysis_unknown'    // New
+    | 'api_error'           // New
+    | 'needs_confirmation'  // New
+    | 'auto_analysis'       // New
+    | 'missing_uri'         // New
     | string;
 
 export interface OcrLogEntry {
@@ -85,6 +97,7 @@ export class OcrLogger {
             if (entry.stage === 'openai_text') estimatedCost = 0.0005;
             if (entry.stage === 'openai_vision') estimatedCost = 0.005;
             if (entry.stage === 'google_vision') estimatedCost = 0.0015;
+            if (entry.stage === 'voice_whisper') estimatedCost = 0.006; // Approx Whisper cost per min (0.006/min)
         }
 
         const logItem: OcrLogEntry = {
@@ -171,6 +184,51 @@ export class OcrLogger {
             docTypePredicted: docType,
             fallbackReason: failureReason,
             metadata
+        });
+    }
+
+    logVoiceLocal(success: boolean, textLength: number, fallbackReason?: FallbackReason, metadata?: Record<string, any>): void {
+        this.logStage({
+            stage: 'voice_local',
+            stageOrder: 1, // Voice Pipeline Step 1
+            success,
+            textLength,
+            fallbackReason,
+            metadata: {
+                ...metadata,
+                source: 'local'
+            }
+        });
+    }
+
+    logVoiceWhisper(success: boolean, textLength: number, fallbackReason?: FallbackReason, metadata?: Record<string, any>): void {
+        this.logStage({
+            stage: 'voice_whisper',
+            stageOrder: 2, // Voice Pipeline Step 2
+            success,
+            textLength,
+            fallbackReason,
+            metadata: {
+                ...metadata,
+                source: 'whisper'
+            }
+        });
+    }
+
+    logVoiceConfirm(originalText: string, editedText: string): void {
+        const isEdited = originalText !== editedText;
+        this.logStage({
+            stage: 'voice_confirm',
+            stageOrder: 2,
+            success: true,
+            textLength: editedText?.length || 0,
+            fallbackReason: 'needs_confirmation',
+            metadata: {
+                source: 'local',
+                original_text: originalText,
+                edited_text: editedText,
+                is_edited: isEdited
+            }
         });
     }
 

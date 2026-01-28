@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -6,15 +6,18 @@ import {
     TouchableOpacity,
     Alert,
     TextInput,
-    ScrollView
+    ScrollView,
+    AppState,
+    Platform
 } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { Audio } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Colors } from '../../constants/Colors';
 import { Ionicons } from '@expo/vector-icons';
 import { extractTextFromImage, maybePreprocessChatText, extractTextWithGoogleVision } from '../../services/ocr';
-import { analyzeImageText, analyzeImageVisual, ScannedData } from '../../services/ai/OpenAIService';
+import { analyzeImageText, analyzeImageVisual, ScannedData, transcribeAudio } from '../../services/ai/OpenAIService';
 import { fetchUrlContent } from '../../services/WebScraperService';
 import { DataStore } from '../../services/DataStore';
 import { ScanSettingsModal } from '../../components/ScanSettingsModal';
@@ -23,7 +26,9 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { setPreprocessEnabled, isPreprocessEnabled } from '../../services/ocrSettings';
 import { common } from '../../styles/common';
 import { showError } from '../../services/errorHandler';
-import { getCurrentOcrLogger } from '../../services/OcrLogger';
+import { getCurrentOcrLogger, createOcrLogger, FallbackReason } from '../../services/OcrLogger';
+import { voiceService, VoiceState } from '../../services/voice/VoiceService';
+import { VoiceNormalizer } from '../../services/voice/VoiceNormalizer';
 
 async function readImageAsBase64(uri: string): Promise<string> {
     try {
@@ -51,6 +56,10 @@ async function readImageAsBase64(uri: string): Promise<string> {
 
 export default function UniversalScannerScreen() {
     const router = useRouter();
+    const params = useLocalSearchParams();
+    const isVoiceMode = params.mode === 'voice';
+    const isVoiceModeRef = useRef(isVoiceMode);
+
     const loading = useLoading();
     const { colors } = useTheme();
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -59,13 +68,357 @@ export default function UniversalScannerScreen() {
     const [settingsVisible, setSettingsVisible] = useState(false);
     const [preprocessEnabled, setPreprocessEnabledState] = useState(isPreprocessEnabled());
 
+    // Voice State
+    const [voiceState, setVoiceState] = useState<VoiceState>('IDLE');
+    const [voiceText, setVoiceText] = useState('');
+    const [confirmText, setConfirmText] = useState('');
+    const [confirmOriginalText, setConfirmOriginalText] = useState('');
+    const appState = useRef(AppState.currentState);
+    const voiceStateRef = useRef<VoiceState>('IDLE');
+    const finalizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingFinalTextRef = useRef<string>('');
+    const localSessionTokenRef = useRef(0);
+    const finalizeLocalTextRef = useRef<(text: string) => void>(() => { });
+    const initVoiceSessionRef = useRef<() => void>(() => { });
+    const MIN_CONFIRM_TEXT_LENGTH = 2;
+    const confirmTextTrimmed = confirmText.trim();
+    const isConfirmTextValid = confirmTextTrimmed.length >= MIN_CONFIRM_TEXT_LENGTH;
+    const setVoiceStateSync = useCallback((state: VoiceState) => {
+        setVoiceState(state);
+        voiceService.syncStateFromUI(state);
+    }, []);
+
+    useEffect(() => {
+        voiceStateRef.current = voiceState;
+    }, [voiceState]);
+
+    useEffect(() => {
+        isVoiceModeRef.current = isVoiceMode;
+    }, [isVoiceMode]);
+
+    const clearFinalizeTimeout = useCallback(() => {
+        if (finalizeTimeoutRef.current) {
+            clearTimeout(finalizeTimeoutRef.current);
+            finalizeTimeoutRef.current = null;
+        }
+    }, []);
+
+    const finalizeLocalText = (text: string) => {
+        clearFinalizeTimeout();
+        void voiceService.stopLocalSTTForConfirm();
+        validateAndFinishLocal(text);
+    };
+    finalizeLocalTextRef.current = finalizeLocalText;
+
+    const bumpLocalSessionToken = () => {
+        localSessionTokenRef.current += 1;
+        return localSessionTokenRef.current;
+    };
+
     useFocusEffect(
         useCallback(() => {
             setSelectedImage(null);
-            setUrl('');
+            if (!isVoiceMode) {
+                setUrl('');
+                setVoiceStateSync('IDLE');
+                setVoiceText('');
+                setConfirmText('');
+                setConfirmOriginalText('');
+            }
             DataStore.clear();
-        }, [])
+
+            // Auto-start Voice if in Voice Mode
+            if (isVoiceMode) {
+                initVoiceSessionRef.current();
+            }
+
+            return () => {
+                clearFinalizeTimeout();
+                // Soft cleanup: 화면 전환 시 Voice 모듈 유지 (재사용 가능)
+                // Note: cleanup 함수는 async 불가하므로 fire-and-forget
+                voiceService.softCleanup().catch(() => { });
+            };
+        }, [clearFinalizeTimeout, isVoiceMode, setVoiceStateSync])
     );
+
+    useEffect(() => {
+        const subscription = AppState.addEventListener('change', nextAppState => {
+            const wasBackground = appState.current.match(/inactive|background/);
+            const isBackground = nextAppState.match(/inactive|background/);
+
+            if (isBackground) {
+                clearFinalizeTimeout();
+                voiceService.cleanup();
+                setVoiceStateSync('IDLE');
+                setVoiceText('');
+                setConfirmText('');
+                setConfirmOriginalText('');
+            } else if (wasBackground && nextAppState === 'active') {
+                if (isVoiceModeRef.current && voiceStateRef.current === 'IDLE') {
+                    initVoiceSessionRef.current();
+                }
+            }
+            appState.current = nextAppState;
+        });
+        return () => subscription.remove();
+    }, [clearFinalizeTimeout, setVoiceStateSync]);
+
+    const initVoiceSession = async () => {
+        bumpLocalSessionToken();
+        setVoiceText('');
+        setConfirmText('');
+        setConfirmOriginalText('');
+        setVoiceStateSync('IDLE');
+        clearFinalizeTimeout();
+        pendingFinalTextRef.current = '';
+
+        // [Patch] Start Logging Session (Safe Mode)
+        let logger = getCurrentOcrLogger();
+        if (!logger) {
+            console.log('[Voice] Logger was null, creating new one.');
+            logger = createOcrLogger();
+        }
+
+        // Use a unique ID for voice, mocking an "image hash"
+        const voiceSessionId = `voice-${Date.now()}`;
+        await logger?.startSession(voiceSessionId);
+
+        voiceService.setListeners({
+            onStateChange: (state) => setVoiceState(state),
+            onLocalResult: (text, isFinal) => {
+                setVoiceText(text);
+                clearFinalizeTimeout();
+                if (isFinal) {
+                    // Stop local STT after final to prevent stray errors
+                    voiceService.stopLocalSTTForConfirm();
+                    // Allow brief pause before finalizing (user might continue speaking)
+                    const sessionToken = localSessionTokenRef.current;
+                    pendingFinalTextRef.current = text;
+                    finalizeTimeoutRef.current = setTimeout(() => {
+                        if (localSessionTokenRef.current !== sessionToken) return;
+                        if (voiceStateRef.current === 'RECORDING_LOCAL') {
+                            finalizeLocalTextRef.current(pendingFinalTextRef.current || text);
+                        }
+                    }, 1200);
+                }
+            },
+            onError: (msg) => {
+                if (voiceStateRef.current === 'CONFIRM_TEXT' || voiceStateRef.current === 'PROCESSING') {
+                    console.warn('[Voice] Suppressed error during confirm/processing:', msg);
+                    return;
+                }
+                console.warn('[Voice] Error:', msg);
+                setVoiceStateSync('ERROR');
+
+                // 🔧 에러 타입 세분화 - 데이터 분석을 위한 구체적 분류
+                let reason: FallbackReason = 'voice_error';
+                if (msg.includes('음성이 인식되지 않았습니다')) reason = 'voice_no_match';
+                else if (msg.includes('권한')) reason = 'permission_denied';
+                else if (msg.includes('네트워크')) reason = 'voice_network_error';
+
+                // Log Failure
+                logger?.logVoiceLocal(false, 0, reason, { error: msg });
+                logger?.flush(); // Async flush (no await here to avoid blocking UI excessively)
+            }
+        });
+
+        // 1. Check Permissions
+        const perm = await Audio.getPermissionsAsync();
+        if (perm.status === 'granted') {
+            setTimeout(() => voiceService.startLocalSTT(), 200);
+        } else if (perm.canAskAgain) {
+            const { status } = await Audio.requestPermissionsAsync();
+            if (status === 'granted') {
+                setTimeout(() => voiceService.startLocalSTT(), 200);
+            } else {
+                Alert.alert('권한 필요', '설정에서 마이크 권한을 허용해주세요.');
+                setVoiceStateSync('ERROR');
+                // [Patch] P7: Standardize Reason & P6: Flush
+                logger?.logVoiceLocal(false, 0, 'permission_denied', { type: 'retry_denied' });
+                await logger?.flush();
+            }
+        } else {
+            Alert.alert('권한 필요', '설정에서 마이크 권한을 허용해주세요.');
+            setVoiceStateSync('ERROR');
+            // [Patch] P7: Standardize Reason & P6: Flush
+            logger?.logVoiceLocal(false, 0, 'permission_denied', { type: 'permanent_denied' });
+            await logger?.flush();
+        }
+    };
+    initVoiceSessionRef.current = initVoiceSession;
+
+    const validateAndFinishLocal = async (text: string) => {
+        const logger = getCurrentOcrLogger();
+
+        // 1. Check Confidence/Length (Simple)
+        if (text.length < 2) {
+            console.log('[Voice] Too short -> Wait for user or Whisper');
+            logger?.logVoiceLocal(false, text.length, 'short_text', { text });
+            await logger?.flush(); // [Patch] P4 Checkpoint
+            setVoiceStateSync('QUALITY_FAIL'); // [Patch] P2 Fallback State
+            return;
+        }
+
+        // 2. Normalize First!
+        const normalized = VoiceNormalizer.normalize(text);
+        console.log(`[Voice] Normalized: "${text}" -> "${normalized}"`);
+        const normalizedChanged = normalized !== text;
+        const highConfidence = VoiceNormalizer.isHighConfidence(normalized);
+
+        if (highConfidence) {
+            console.log('[Voice] High confidence -> Auto analysis');
+            logger?.logVoiceLocal(true, text.length, 'auto_analysis', {
+                text: normalized,
+                original: text,
+                auto_analysis: true,
+                normalized_changed: normalizedChanged
+            });
+            await logger?.flush();
+            setVoiceStateSync('PROCESSING');
+            await processVoiceText(normalized, 'local');
+            return;
+        }
+
+        // 3. Entity Check (Rule-based) using VoiceNormalizer (P3)
+        if (VoiceNormalizer.isEntityLike(normalized)) {
+            if (normalizedChanged) {
+                console.log('[Voice] Normalization changed -> Force confirmation');
+            }
+            console.log('[Voice] Needs confirmation -> User intervention');
+            setConfirmOriginalText(text);
+            setConfirmText(normalized);
+            logger?.logVoiceLocal(true, text.length, 'needs_confirmation', { text: normalized, original: text, normalized_changed: normalizedChanged });
+            await logger?.flush();
+            setVoiceStateSync('CONFIRM_TEXT');
+        } else {
+            console.log('[Voice] Ambiguous result -> User intervention needed');
+            logger?.logVoiceLocal(false, text.length, 'no_entity', { text: normalized, original: text });
+            await logger?.flush(); // [Patch] P4 Checkpoint
+            setVoiceStateSync('QUALITY_FAIL'); // [Patch] P2 Fallback State
+        }
+    };
+
+    const restartLocalSTT = () => {
+        // Reset UI state before restarting to avoid transient Voice errors
+        clearFinalizeTimeout();
+        bumpLocalSessionToken();
+        setVoiceText('');
+        setConfirmText('');
+        setConfirmOriginalText('');
+        setVoiceStateSync('IDLE');
+        voiceService.safeRestartLocalSTT();
+    };
+
+    const handleConfirmAnalysis = async () => {
+        const text = confirmTextTrimmed;
+        if (text.length < MIN_CONFIRM_TEXT_LENGTH) {
+            Alert.alert('알림', '텍스트를 2자 이상 입력해주세요.');
+            return;
+        }
+        const logger = getCurrentOcrLogger();
+        logger?.logVoiceConfirm(confirmOriginalText || text, text);
+        await logger?.flush();
+        setVoiceStateSync('PROCESSING');
+        await processVoiceText(text, 'local');
+    };
+
+    const handleStopWhisper = async () => {
+        const logger = getCurrentOcrLogger();
+        const uri = await voiceService.stopWhisperRecording();
+
+        if (!uri) {
+            Alert.alert('인식 실패', '녹음 파일을 찾을 수 없습니다. 다시 시도해주세요.');
+            setVoiceStateSync('QUALITY_FAIL');
+            logger?.logVoiceWhisper(false, 0, 'missing_uri', { error: 'missing_uri' });
+            await logger?.flush();
+            return;
+        }
+
+        setVoiceStateSync('PROCESSING');
+        try {
+            const text = await transcribeAudio(uri);
+            const trimmed = text.trim();
+            setVoiceText(text);
+
+            if (trimmed.length < MIN_CONFIRM_TEXT_LENGTH) {
+                logger?.logVoiceWhisper(false, trimmed.length, 'short_text', { text });
+                await logger?.flush();
+                Alert.alert('인식 실패', '텍스트가 너무 짧습니다. 다시 말해주세요.');
+                setVoiceStateSync('QUALITY_FAIL');
+                return;
+            }
+
+            logger?.logVoiceWhisper(true, trimmed.length, undefined, { text });
+            await processVoiceText(text, 'whisper');
+        } catch (e: any) {
+            console.error('Whisper Transcribe Error:', e);
+            Alert.alert('인식 실패', '다시 시도해주세요.');
+            setVoiceStateSync('QUALITY_FAIL');
+            logger?.logVoiceWhisper(false, 0, 'api_error', { error: e.message });
+            await logger?.flush(); // [Patch] P4 Checkpoint
+        }
+    };
+
+    const processVoiceText = async (rawText: string, source: 'local' | 'whisper') => {
+        if (!rawText || rawText.trim().length === 0) {
+            Alert.alert('알림', '인식된 내용이 없습니다.');
+            setVoiceStateSync('IDLE');
+            return;
+        }
+
+        if (source === 'local') await voiceService.stopLocalSTT();
+
+        loading.show('내용 분석 중...');
+        try {
+            // 0. Voice Specific Normalization (If not already done in validateAndFinishLocal)
+            // But handleStopWhisper calls this too, so we should normalize here as well.
+            // (Normalization is idempotent mostly, but let's be safe)
+            const normalized = VoiceNormalizer.normalize(rawText);
+            const resolved = VoiceNormalizer.normalizeRelativeWeekdays(normalized, new Date());
+
+            // 1. Text Preprocessing (Date Normalization like Chat)
+            const preprocessed = maybePreprocessChatText(resolved);
+            console.log(`[Voice] Processing (${source}):`, rawText, '->', resolved);
+
+            // 2. OpenAI Analysis
+            const results = await analyzeImageText(preprocessed, { isVoiceInput: true });
+            const valid = results.filter(r => r.type !== 'UNKNOWN');
+
+            if (valid.length > 0) {
+                // Success -> Result Screen
+                // Should flush logs here or in handleScanResult? 
+                // handleScanResult navigates away, so flush before navigation might be good, 
+                // but handleScanResult is complex. usually the next screen might flush or just keep session?
+                // For now, let's flush here for safety
+                await getCurrentOcrLogger()?.flush();
+
+                handleScanResult(valid, 'voice-input', preprocessed);
+            } else {
+                Alert.alert('분류 실패', '인식된 내용에서 일정을 찾지 못했습니다.');
+                getCurrentOcrLogger()?.logStage({
+                    stage: source === 'local' ? 'voice_local' : 'voice_whisper',
+                    stageOrder: 3,
+                    success: false,
+                    fallbackReason: 'analysis_unknown',
+                    metadata: {
+                        source,
+                        original_text: rawText,
+                        normalized_text: resolved
+                    }
+                });
+                // [Patch] P6: Flush for analysis_unknown
+                await getCurrentOcrLogger()?.flush();
+                setVoiceStateSync('IDLE');
+            }
+        } catch (e: any) {
+            console.error('[Voice] Analysis Error:', e);
+            showError(e.message || '분석 중 오류가 발생했습니다.');
+            setVoiceStateSync('ERROR');
+            await getCurrentOcrLogger()?.flush(); // [Patch] P4 Checkpoint
+        } finally {
+            loading.hide();
+        }
+    };
 
     const handleTogglePreprocess = (enabled: boolean) => {
         setPreprocessEnabledState(enabled);
@@ -282,101 +635,242 @@ export default function UniversalScannerScreen() {
             <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
                 {/* Header */}
                 <View style={styles.header}>
-                    <Text style={[styles.title, { color: colors.text }]}>AI 문서 스캔</Text>
+                    <Text style={[styles.title, { color: colors.text }]}>
+                        {isVoiceMode ? '음성으로 간편 등록' : 'AI 문서 스캔'}
+                    </Text>
                     <Text style={[styles.description, { color: colors.subText }]}>
-                        영수증, 청첩장, 송금내역 등을{'\n'}자동으로 분류하여 저장합니다.
+                        {isVoiceMode
+                            ? '말한 내용을 입력하면 일정/경조사/가계부로\n자동 분류해 저장합니다.'
+                            : '영수증, 청첩장, 송금내역 등을\n자동으로 분류하여 저장합니다.'}
                     </Text>
                 </View>
 
-                {/* URL Input */}
-                <View style={styles.urlSection}>
-                    <View
-                        style={[
-                            styles.inputContainer,
-                            {
-                                backgroundColor: colors.card,
-                                borderColor: colors.border,
-                                height: inputHeight,
-                            },
-                        ]}
-                    >
-                        <Ionicons name="link-outline" size={20} color={colors.subText} style={{ marginRight: 8, marginTop: 4 }} />
-                        <TextInput
-                            style={[styles.input, { color: colors.text, height: Math.max(36, inputHeight - 24) }]}
-                            placeholder="URL 또는 문자 내용 붙여넣기"
-                            placeholderTextColor={colors.subText}
-                            value={url}
-                            onChangeText={setUrl}
-                            autoCapitalize="none"
-                            multiline={true}
-                            numberOfLines={3}
-                            onContentSizeChange={(event) => {
-                                const height = event.nativeEvent.contentSize.height;
-                                // 패딩(24)을 고려하여 최소 56, 최대 150
-                                const nextHeight = Math.min(Math.max(56, height + 24), 150);
-                                setInputHeight(nextHeight);
-                            }}
-                            textAlignVertical="top"
-                            accessibilityLabel="URL 또는 텍스트 입력창"
-                        />
+                {/* Voice Status Overlay Area */}
+                {isVoiceMode && (
+                    <View style={[styles.voiceStatusContainer, { borderColor: getColorForState(voiceState, colors), backgroundColor: getBgForState(voiceState, colors) }]}>
+                        <View style={styles.voiceIconContainer}>
+                            <Ionicons name={voiceState.includes('RECORDING') ? "mic" : "mic-outline"} size={32} color={getColorForState(voiceState, colors)} />
+                            {voiceState.includes('RECORDING') && (
+                                <View style={styles.recordingDot} />
+                            )}
+                        </View>
+                        <Text style={[styles.voiceStatusText, { color: colors.text }]}>
+                            {getMessageForState(voiceState)}
+                        </Text>
+
+                        {/* Real-time Text Preview (For Local STT) */}
+                        {voiceState === 'RECORDING_LOCAL' && voiceText.length > 0 && (
+                            <Text style={styles.previewText}>"{voiceText}"</Text>
+                        )}
+
+                        {/* IDLE State - Mixed Control (P1) */}
+                        {voiceState === 'IDLE' && (
+                            <View style={{ alignItems: 'center', gap: 12 }}>
+                                <TouchableOpacity onPress={restartLocalSTT} style={[styles.stopButton, { backgroundColor: colors.primary }]}>
+                                    <Text style={styles.stopButtonText}>🎙 다시 말하기 (Local)</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => voiceService.startWhisperRecording()} style={{ padding: 8 }}>
+                                    <Text style={{ color: colors.subText, fontSize: 13, textDecorationLine: 'underline' }}>정밀 인식(Whisper)으로 전환</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+
+                        {/* CONFIRM_TEXT State (P16) */}
+                        {voiceState === 'CONFIRM_TEXT' && (
+                            <View style={{ gap: 12, width: '100%' }}>
+                                <Text style={[styles.voiceStatusText, { color: colors.subText }]}>인식 결과 확인</Text>
+                                <TextInput
+                                    value={confirmText}
+                                    onChangeText={setConfirmText}
+                                    multiline
+                                    editable
+                                    style={[
+                                        styles.confirmInput,
+                                        {
+                                            color: colors.text,
+                                            borderColor: colors.border,
+                                            backgroundColor: colors.card
+                                        }
+                                    ]}
+                                    placeholder="인식된 텍스트를 확인/수정하세요"
+                                    placeholderTextColor={colors.subText}
+                                />
+                                {!isConfirmTextValid && (
+                                    <Text style={[styles.confirmHint, { color: colors.subText }]}>텍스트를 2자 이상 입력해주세요.</Text>
+                                )}
+                                <TouchableOpacity
+                                    onPress={handleConfirmAnalysis}
+                                    disabled={!isConfirmTextValid}
+                                    style={[
+                                        styles.stopButton,
+                                        { backgroundColor: colors.primary, opacity: isConfirmTextValid ? 1 : 0.5 }
+                                    ]}
+                                >
+                                    <Text style={styles.stopButtonText}>✅ 승인하고 분석</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={restartLocalSTT} style={[styles.stopButton, { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }]}>
+                                    <Text style={[styles.stopButtonText, { color: colors.text }]}>🎤 다시 말하기 (Local)</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => voiceService.startWhisperRecording()} style={{ padding: 8, alignSelf: 'center' }}>
+                                    <Text style={{ color: colors.subText, fontSize: 13, textDecorationLine: 'underline' }}>정밀 인식(Whisper)으로 전환</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+
+                        {/* QUALITY_FAIL State (P2) */}
+                        {voiceState === 'QUALITY_FAIL' && (
+                            <View style={{ gap: 12 }}>
+                                <TouchableOpacity onPress={restartLocalSTT} style={[styles.stopButton, { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }]}>
+                                    <Text style={[styles.stopButtonText, { color: colors.text }]}>다시 시도 (빠름)</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => voiceService.startWhisperRecording()} style={[styles.stopButton, { backgroundColor: colors.primary }]}>
+                                    <Text style={styles.stopButtonText}>🎙 정확하게 다시 말하기 (Whisper)</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+
+                        {/* ERROR State - System Error */}
+                        {voiceState === 'ERROR' && (
+                            <View style={{ gap: 12 }}>
+                                <TouchableOpacity onPress={restartLocalSTT} style={[styles.stopButton, { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }]}>
+                                    <Text style={[styles.stopButtonText, { color: colors.text }]}>다시 시도</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+
+                        {/* Active Recording State (Local) */}
+                        {voiceState === 'RECORDING_LOCAL' && (
+                            <View style={{ gap: 12 }}>
+                                <TouchableOpacity onPress={() => finalizeLocalText(voiceText)} style={styles.stopButton}>
+                                    <Text style={styles.stopButtonText}>완료</Text>
+                                </TouchableOpacity>
+                                {/* Allow switching to Whisper if local is bad */}
+                                <TouchableOpacity onPress={() => voiceService.startWhisperRecording()} style={{ padding: 10 }}>
+                                    <Text style={{ color: colors.subText, textDecorationLine: 'underline' }}>잘 안되나요? 정밀 인식으로 전환</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+
+                        {/* Active Recording State (Whisper) */}
+                        {voiceState === 'RECORDING_WHISPER' && (
+                            <TouchableOpacity onPress={handleStopWhisper} style={styles.stopButton}>
+                                <Text style={styles.stopButtonText}>완료</Text>
+                            </TouchableOpacity>
+                        )}
+
+
                     </View>
+                )}
+
+                {/* Input Section (Hidden in Voice Mode unless needed fallback) */}
+                {!isVoiceMode && (
+                    <View style={styles.urlSection}>
+                        <View
+                            style={[
+                                styles.inputContainer,
+                                {
+                                    backgroundColor: colors.card,
+                                    borderColor: colors.border,
+                                    height: inputHeight,
+                                    borderWidth: 1,
+                                },
+                            ]}
+                        >
+                            <Ionicons name="link-outline" size={20} color={colors.subText} style={{ marginRight: 8, marginTop: 4 }} />
+                            <TextInput
+                                style={[styles.input, { color: colors.text, height: Math.max(36, inputHeight - 24) }]}
+                                placeholder="URL 또는 문자 내용 붙여넣기"
+                                placeholderTextColor={colors.subText}
+                                value={url}
+                                onChangeText={setUrl}
+                                autoCapitalize="none"
+                                multiline={true}
+                                numberOfLines={3}
+                                onContentSizeChange={(event) => {
+                                    const height = event.nativeEvent.contentSize.height;
+                                    const nextHeight = Math.min(Math.max(56, height + 24), 150);
+                                    setInputHeight(nextHeight);
+                                }}
+                                textAlignVertical="top"
+                                accessibilityLabel="URL 또는 텍스트 입력창"
+                            />
+                        </View>
+                        <TouchableOpacity
+                            style={[styles.urlButton, { backgroundColor: colors.primary }]}
+                            onPress={handleUrlSubmit}
+                            accessibilityLabel="링크 분석 버튼"
+                        >
+                            <Text style={styles.urlButtonText}>분석</Text>
+                        </TouchableOpacity>
+                    </View>
+                )}
+
+                {/* Divider (Hidden in Voice Mode) */}
+                {!isVoiceMode && (
+                    <View style={styles.divider}>
+                        <View style={[styles.line, { backgroundColor: colors.border }]} />
+                        <Text style={[styles.orText, { color: colors.subText }]}>또는 이미지 스캔</Text>
+                        <View style={[styles.line, { backgroundColor: colors.border }]} />
+                    </View>
+                )}
+
+                {/* Image Actions (Hidden in Voice Mode) */}
+                {!isVoiceMode && (
+                    <View style={styles.imageActions}>
+                        <TouchableOpacity
+                            style={[styles.largeCard, { backgroundColor: colors.card, shadowColor: colors.shadow }]}
+                            onPress={pickImage}
+                            accessibilityLabel="앨범에서 이미지 선택"
+                        >
+                            <View style={[styles.largeIconBox, { backgroundColor: '#E0F2FE' }]}>
+                                <Ionicons name="images" size={48} color={Colors.navy} />
+                            </View>
+                            <View style={styles.largeCardContent}>
+                                <Text style={[styles.largeCardTitle, { color: colors.text }]}>이미지 업로드</Text>
+                                <Text style={[styles.largeCardDesc, { color: colors.subText }]}>앨범에서 선택하기</Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={24} color={colors.subText} />
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.largeCard, { backgroundColor: colors.card, shadowColor: colors.shadow }]}
+                            onPress={takePhoto}
+                            accessibilityLabel="직접 촬영하기"
+                        >
+                            <View style={[styles.largeIconBox, { backgroundColor: '#FEF3C7' }]}>
+                                <Ionicons name="camera" size={48} color={Colors.orange} />
+                            </View>
+                            <View style={styles.largeCardContent}>
+                                <Text style={[styles.largeCardTitle, { color: colors.text }]}>직접 촬영하기</Text>
+                                <Text style={[styles.largeCardDesc, { color: colors.subText }]}>카메라로 찍기</Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={24} color={colors.subText} />
+                        </TouchableOpacity>
+                    </View>
+                )}
+
+                {/* OCR Settings Button (Hidden in Voice Mode) */}
+                {!isVoiceMode && (
                     <TouchableOpacity
-                        style={[styles.urlButton, { backgroundColor: colors.primary }]}
-                        onPress={handleUrlSubmit}
-                        accessibilityLabel="링크 분석 버튼"
+                        onPress={() => setSettingsVisible(true)}
+                        style={{ marginTop: 24, alignSelf: 'center' }}
+                        accessibilityLabel="OCR 전처리 설정"
                     >
-                        <Text style={styles.urlButtonText}>분석</Text>
+                        <Text style={{ color: colors.subText, fontSize: 14, textDecorationLine: 'underline' }}>OCR 전처리 설정</Text>
                     </TouchableOpacity>
-                </View>
+                )}
 
-                {/* Divider */}
-                <View style={styles.divider}>
-                    <View style={[styles.line, { backgroundColor: colors.border }]} />
-                    <Text style={[styles.orText, { color: colors.subText }]}>또는 이미지 스캔</Text>
-                    <View style={[styles.line, { backgroundColor: colors.border }]} />
-                </View>
-
-                {/* Image Actions */}
-                <View style={styles.imageActions}>
-                    <TouchableOpacity
-                        style={[styles.largeCard, { backgroundColor: colors.card, shadowColor: colors.shadow }]}
-                        onPress={pickImage}
-                        accessibilityLabel="앨범에서 이미지 선택"
-                    >
-                        <View style={[styles.largeIconBox, { backgroundColor: '#E0F2FE' }]}>
-                            <Ionicons name="images" size={48} color={Colors.navy} />
+                {/* Voice Mode Hints */}
+                {isVoiceMode && (
+                    <View style={styles.hintContainer}>
+                        <Text style={[styles.hintTitle, { color: colors.subText }]}>이렇게 말해보세요</Text>
+                        <View style={styles.hintList}>
+                            <Text style={styles.hintItem}>"내일 점심 12시 강남역 약속"</Text>
+                            <Text style={styles.hintItem}>"스타벅스 5000원 결제"</Text>
+                            <Text style={styles.hintItem}>"이번 주 토요일 친구 결혼식"</Text>
                         </View>
-                        <View style={styles.largeCardContent}>
-                            <Text style={[styles.largeCardTitle, { color: colors.text }]}>이미지 업로드</Text>
-                            <Text style={[styles.largeCardDesc, { color: colors.subText }]}>앨범에서 선택하기</Text>
-                        </View>
-                        <Ionicons name="chevron-forward" size={24} color={colors.subText} />
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={[styles.largeCard, { backgroundColor: colors.card, shadowColor: colors.shadow }]}
-                        onPress={takePhoto}
-                        accessibilityLabel="직접 촬영하기"
-                    >
-                        <View style={[styles.largeIconBox, { backgroundColor: '#FEF3C7' }]}>
-                            <Ionicons name="camera" size={48} color={Colors.orange} />
-                        </View>
-                        <View style={styles.largeCardContent}>
-                            <Text style={[styles.largeCardTitle, { color: colors.text }]}>직접 촬영하기</Text>
-                            <Text style={[styles.largeCardDesc, { color: colors.subText }]}>카메라로 찍기</Text>
-                        </View>
-                        <Ionicons name="chevron-forward" size={24} color={colors.subText} />
-                    </TouchableOpacity>
-                </View>
-
-                {/* OCR Settings Button */}
-                <TouchableOpacity
-                    onPress={() => setSettingsVisible(true)}
-                    style={{ marginTop: 24, alignSelf: 'center' }}
-                    accessibilityLabel="OCR 전처리 설정"
-                >
-                    <Text style={{ color: colors.subText, fontSize: 14, textDecorationLine: 'underline' }}>OCR 전처리 설정</Text>
-                </TouchableOpacity>
+                    </View>
+                )}
 
                 {/* Scan Settings Modal */}
                 <ScanSettingsModal
@@ -388,6 +882,39 @@ export default function UniversalScannerScreen() {
             </ScrollView>
         </View>
     );
+}
+
+// Helpers for UI
+function getColorForState(state: VoiceState, colors: any) {
+    switch (state) {
+        case 'RECORDING_WHISPER': return Colors.red;
+        case 'RECORDING_LOCAL': return Colors.primary;
+        case 'PROCESSING': return Colors.green;
+        case 'QUALITY_FAIL': return Colors.orange; // P2
+        case 'CONFIRM_TEXT': return Colors.primary;
+        default: return colors.subText;
+    }
+}
+
+function getBgForState(state: VoiceState, colors: any) {
+    if (state === 'RECORDING_WHISPER') return 'rgba(239, 68, 68, 0.05)';
+    if (state === 'RECORDING_LOCAL') return 'rgba(59, 130, 246, 0.05)';
+    if (state === 'QUALITY_FAIL') return 'rgba(255, 165, 0, 0.05)'; // P2
+    if (state === 'CONFIRM_TEXT') return 'rgba(59, 130, 246, 0.03)';
+    return 'transparent';
+}
+
+function getMessageForState(state: VoiceState) {
+    switch (state) {
+        case 'IDLE': return "준비 중...";
+        case 'PROCESSING': return "잠시만요, 정리하고 있어요...";
+        case 'RECORDING_WHISPER': return "듣고 있어요... (정밀 모드)";
+        case 'RECORDING_LOCAL': return "말씀해주세요...";
+        case 'QUALITY_FAIL': return "잘 못 들었어요. 다시 말씀해주세요.";
+        case 'CONFIRM_TEXT': return "인식 결과를 확인해주세요.";
+        case 'ERROR': return "오류가 발생했습니다.";
+        default: return "";
+    }
 }
 
 const styles = StyleSheet.create({
@@ -419,6 +946,20 @@ const styles = StyleSheet.create({
         flex: 1,
         fontFamily: 'Pretendard-Medium',
         fontSize: 16,
+    },
+    confirmInput: {
+        minHeight: 96,
+        borderWidth: 1,
+        borderRadius: 12,
+        padding: 12,
+        textAlignVertical: 'top',
+        fontFamily: 'Pretendard-Regular',
+        fontSize: 16,
+    },
+    confirmHint: {
+        fontFamily: 'Pretendard-Regular',
+        fontSize: 13,
+        textAlign: 'center',
     },
     urlButton: {
         borderRadius: 16,
@@ -468,4 +1009,93 @@ const styles = StyleSheet.create({
         fontFamily: 'Pretendard-Regular',
         fontSize: 14,
     },
+    // Voice Mode Styles
+    voiceStatusContainer: {
+        alignItems: 'center',
+        padding: 24,
+        borderRadius: 24,
+        borderWidth: 2,
+        marginBottom: 32,
+        borderStyle: 'dashed'
+    },
+    voiceIconContainer: {
+        marginBottom: 16,
+        position: 'relative'
+    },
+    recordingDot: {
+        position: 'absolute',
+        top: 0,
+        right: -4,
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: Colors.red
+    },
+    voiceStatusText: {
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 18,
+        textAlign: 'center',
+        marginBottom: 20
+    },
+    previewText: {
+        fontFamily: 'Pretendard-Regular',
+        fontSize: 15,
+        color: Colors.subText,
+        textAlign: 'center',
+        marginTop: 16,
+        fontStyle: 'italic'
+    },
+    stopButton: {
+        paddingHorizontal: 24,
+        paddingVertical: 12,
+        backgroundColor: Colors.navy,
+        borderRadius: 30,
+    },
+    stopButtonText: {
+        color: 'white',
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 16
+    },
+    retryButton: {
+        paddingHorizontal: 24,
+        paddingVertical: 12,
+        borderRadius: 30,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        shadowColor: Colors.orange,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 4
+    },
+    retryButtonText: {
+        color: 'white',
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 16
+    },
+    hintContainer: {
+        marginTop: 20,
+        paddingHorizontal: 20,
+        alignItems: 'center'
+    },
+    hintTitle: {
+        fontFamily: 'Pretendard-Medium',
+        fontSize: 14,
+        marginBottom: 12
+    },
+    hintList: {
+        gap: 8,
+        alignItems: 'center'
+    },
+    hintItem: {
+        fontFamily: 'Pretendard-Regular',
+        fontSize: 15,
+        color: Colors.subText,
+        backgroundColor: 'rgba(0,0,0,0.03)',
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 12,
+        overflow: 'hidden'
+    }
 });

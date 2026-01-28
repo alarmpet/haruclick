@@ -15,9 +15,9 @@ CREATE TABLE IF NOT EXISTS public.notices (
 ALTER TABLE public.notices ENABLE ROW LEVEL SECURITY;
 
 -- [정책] 누구나 읽기 가능 / 관리자만 쓰기 가능
-CREATE POLICY "Public can view active notices" 
-ON public.notices FOR SELECT 
-USING (true);
+CREATE POLICY "Authenticated can view active notices"
+ON public.notices FOR SELECT TO authenticated
+USING (is_active);
 
 CREATE POLICY "Admins can manage notices" 
 ON public.notices FOR ALL 

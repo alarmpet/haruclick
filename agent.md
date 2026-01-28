@@ -8,6 +8,17 @@
 - **Native Rebuild**: 네이티브 모듈 변경 등으로 앱을 리빌드해야 할 경우, 반드시 **`run-android-local`** 스크립트를 사용합니다.
     - ❌ `npx expo run:android` 직접 실행 금지 (환경 설정 누락 방지)
     - ✅ `.\run-android-local.bat` 실행
+    - ⚠️ **Physical Device Note**: 빌드 후 폰에 설치가 안 된 경우, 수동으로 설치합니다.
+        - `adb install -r android/app/build/outputs/apk/debug/app-debug.apk`
+    - ℹ️ **Tunnel Mode**: 빌드 없이 JS 수정사항만 폰에서 확인하려면 `.\auto-run-tunnel.bat`을 사용합니다.
+
+### Physical Device Debugging (Timeout & Network)
+- **증상**: "Error loading app: timeout" 발생 시
+- **체크리스트**:
+    1. **Network Security Config**: `android/app/src/main/res/xml/network_security_config.xml` 파일에 `<base-config cleartextTrafficPermitted="true" />` 설정 확인. (설정 변경 시 **Rebuild 필수**)
+    2. **Same Wi-Fi**: PC와 폰이 동일한 Wi-Fi(SSID)에 접속했는지 확인.
+    3. **Firewall**: Windows 방화벽에서 Node.js/Expo 허용 여부 확인.
+    4. **Troubleshooting Guide**: 상세 내용은 `troubleshooting_guide.md` 참고.
 
 ### 계획 우선 (Planning First)
 - **Implementation Plan**: 에러 수정, 기능 추가/업데이트 등 모든 작업 시작 전에는 **반드시 작업 계획서(Implementation Plan)를 먼저 작성**하고 사용자의 승인을 받습니다.

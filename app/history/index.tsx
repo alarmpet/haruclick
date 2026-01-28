@@ -1,5 +1,5 @@
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
-import { useState, useCallback } from 'react';
+import React, { memo, useCallback, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { Colors } from '../../constants/Colors';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -7,6 +7,44 @@ import { getEvents, EventRecord } from '../../services/supabase';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
 type Tab = 'all' | 'given' | 'received';
+
+const formatMoney = (amount: number) => amount?.toLocaleString() + '원';
+
+
+
+interface HistoryRowProps {
+    item: EventRecord;
+    colors: typeof Colors;
+}
+
+const HistoryRow = memo(function HistoryRow({ item, colors }: HistoryRowProps) {
+    return (
+        <View style={[styles.eventCard, { backgroundColor: colors.card }]}>
+            <View style={styles.eventLeft}>
+                <View style={[styles.eventIcon, item.isReceived ? styles.receivedIcon : styles.givenIcon]}>
+                    <Ionicons
+                        name={item.isReceived ? "arrow-down" : "arrow-up"}
+                        size={16}
+                        color={item.isReceived ? "#4ADE80" : "#F87171"}
+                    />
+                </View>
+                <View style={{ flex: 1 }}>
+                    <Text style={[styles.eventName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
+                    <Text style={[styles.eventDetail, { color: colors.subText }]}>
+                        {item.relation || item.type} · {item.date?.split('T')[0]}
+                    </Text>
+                </View>
+            </View>
+            <Text style={[
+                styles.amount,
+                item.isReceived ? styles.receivedAmount : styles.givenAmount
+            ]}>
+                {item.isReceived ? '+' : '-'}{formatMoney(item.amount || 0)}
+            </Text>
+        </View>
+    );
+});
+
 
 export default function ReportScreen() {
     const { colors, isDark } = useTheme();
@@ -20,13 +58,7 @@ export default function ReportScreen() {
     const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
     const [datePickerVisible, setDatePickerVisible] = useState(false);
 
-    useFocusEffect(
-        useCallback(() => {
-            loadData();
-        }, [selectedYear, selectedMonth])
-    );
-
-    const loadData = async () => {
+    const loadData = useCallback(async () => {
         setLoading(true);
         // Server-side filtering by Year/Month
         const eventsData = await getEvents(selectedYear, selectedMonth);
@@ -68,7 +100,14 @@ export default function ReportScreen() {
             diff: totalReceived - totalGiven // Diff usually excludes pending? Pending is future.
         });
         setLoading(false);
-    };
+    }, [selectedYear, selectedMonth]);
+
+    useFocusEffect(
+        useCallback(() => {
+            loadData();
+        }, [loadData])
+    );
+
 
     const filteredEvents = events.filter(e => {
         if (activeTab === 'all') return true;
@@ -76,7 +115,6 @@ export default function ReportScreen() {
         return e.isReceived;
     });
 
-    const formatMoney = (amount: number) => amount?.toLocaleString() + '원';
 
     // 월 변경
     const changeMonth = (delta: number) => {
@@ -99,31 +137,11 @@ export default function ReportScreen() {
     const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
     const months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
-    const renderItem = ({ item }: { item: EventRecord }) => (
-        <View style={[styles.eventCard, { backgroundColor: colors.card }]}>
-            <View style={styles.eventLeft}>
-                <View style={[styles.eventIcon, item.isReceived ? styles.receivedIcon : styles.givenIcon]}>
-                    <Ionicons
-                        name={item.isReceived ? "arrow-down" : "arrow-up"}
-                        size={16}
-                        color={item.isReceived ? "#4ADE80" : "#F87171"}
-                    />
-                </View>
-                <View style={{ flex: 1 }}>
-                    <Text style={[styles.eventName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
-                    <Text style={[styles.eventDetail, { color: colors.subText }]}>
-                        {item.relation || item.type} · {item.date?.split('T')[0]}
-                    </Text>
-                </View>
-            </View>
-            <Text style={[
-                styles.amount,
-                item.isReceived ? styles.receivedAmount : styles.givenAmount
-            ]}>
-                {item.isReceived ? '+' : '-'}{formatMoney(item.amount || 0)}
-            </Text>
-        </View>
-    );
+    const renderItem = useCallback(({ item }: { item: EventRecord }) => (
+        <HistoryRow item={item} colors={colors} />
+    ), [colors]);
+
+    const keyExtractor = useCallback((item: EventRecord) => item.id, []);
 
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -205,7 +223,11 @@ export default function ReportScreen() {
                 <FlatList
                     data={filteredEvents}
                     renderItem={renderItem}
-                    keyExtractor={item => item.id}
+                    keyExtractor={keyExtractor}
+                    initialNumToRender={8}
+                    windowSize={5}
+                    maxToRenderPerBatch={10}
+                    removeClippedSubviews
                     contentContainerStyle={styles.listContent}
                     ListEmptyComponent={
                         <View style={styles.emptyContainer}>

@@ -6,6 +6,12 @@ async function hashString(value: string): Promise<string> {
 }
 
 export async function getImageHash(uri: string): Promise<string> {
+    // 🔧 가상 URI (voice, text, http) 조기 반환 - 파일 시스템 접근 불필요
+    if (uri.startsWith('voice-') || uri.startsWith('text-') ||
+        uri.startsWith('http://') || uri.startsWith('https://')) {
+        return await hashString(uri);
+    }
+
     try {
         const info = await FileSystem.getInfoAsync(uri);
         if (info.exists && typeof info.size === 'number') {

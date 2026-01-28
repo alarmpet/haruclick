@@ -3,7 +3,7 @@
 {{DESCRIPTION}}
 
 ## 🚀 Features
-- **AI-Powered OCR**: Automatically extracts text from generic receipt images, gifticons, and wedding invitations.
+- **AI-Powered OCR**: Automatically extracts text from receipts, invitations, and common document images.
 - **Smart Classification**: Categorizes event types (Wedding, Funeral, Birthday) and financial transactions.
 - **Calendar Integration**: Syncs extracted events directly to your device calendar.
 - **Dark Mode Support**: Fully supported with dynamic theming.

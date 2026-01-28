@@ -3,7 +3,7 @@
 
 -- 1. Update ocr_pipeline_logs Table
 ALTER TABLE ocr_pipeline_logs ADD COLUMN IF NOT EXISTS image_hash TEXT;
-ALTER TABLE ocr_pipeline_logs ADD COLUMN IF NOT EXISTS doc_type_predicted TEXT; -- GIFTICON, etc.
+ALTER TABLE ocr_pipeline_logs ADD COLUMN IF NOT EXISTS doc_type_predicted TEXT; -- INVITATION, OBITUARY, APPOINTMENT, STORE_PAYMENT, BANK_TRANSFER, BILL, SOCIAL, RECEIPT, TRANSFER, UNKNOWN
 ALTER TABLE ocr_pipeline_logs ADD COLUMN IF NOT EXISTS confidence FLOAT;
 ALTER TABLE ocr_pipeline_logs ADD COLUMN IF NOT EXISTS processing_time_ms INT;
 ALTER TABLE ocr_pipeline_logs ADD COLUMN IF NOT EXISTS retry_count INT DEFAULT 0;

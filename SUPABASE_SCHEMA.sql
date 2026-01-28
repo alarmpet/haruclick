@@ -7,7 +7,6 @@
 -- 1. 기존 테이블 삭제 (의존성 순서 고려: 자식 테이블부터)
 DROP TABLE IF EXISTS public.votes CASCADE;
 DROP TABLE IF EXISTS public.polls CASCADE;
-DROP TABLE IF EXISTS public.gifticons CASCADE;
 DROP TABLE IF EXISTS public.ledger CASCADE;
 DROP TABLE IF EXISTS public.bank_transactions CASCADE;
 DROP TABLE IF EXISTS public.events CASCADE;
@@ -37,30 +36,6 @@ alter table public.events enable row level security;
 -- WARNING: In production, you must change this to only allow authenticated users to view their own data!
 create policy "Allow public access for demo"
   on public.events
-  for all
-  using (true)
-  with check (true);
-
--- Gifticons Table
-create table public.gifticons (
-    id uuid default gen_random_uuid() primary key,
-    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-    user_id uuid default auth.uid(), 
-    product_name text not null,
-    sender_name text,
-    expiry_date date not null,
-    image_url text,
-    status text default 'available', -- 'available' or 'used'
-    estimated_price integer default 0,
-    barcode_number text -- ✅ 추가: 기프티콘 바코드 번호 저장
-);
-
--- Enable RLS for gifticons
-alter table public.gifticons enable row level security;
-
--- Policy for gifticons (Permissive for demo)
-create policy "Allow public access for demo gifticons"
-  on public.gifticons
   for all
   using (true)
   with check (true);
@@ -182,5 +157,4 @@ CREATE POLICY "Users can delete their own bank transactions"
 CREATE INDEX IF NOT EXISTS idx_events_user_date ON public.events(user_id, event_date);
 CREATE INDEX IF NOT EXISTS idx_ledger_user_date ON public.ledger(user_id, transaction_date);
 CREATE INDEX IF NOT EXISTS idx_bank_trans_user_date ON public.bank_transactions(user_id, transaction_date);
-CREATE INDEX IF NOT EXISTS idx_gifticons_user_expiry ON public.gifticons(user_id, expiry_date);
 

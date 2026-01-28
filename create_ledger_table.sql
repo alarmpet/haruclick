@@ -8,7 +8,6 @@
 DROP TABLE IF EXISTS public.ledger CASCADE;
 DROP TABLE IF EXISTS public.votes CASCADE;
 DROP TABLE IF EXISTS public.polls CASCADE;
-DROP TABLE IF EXISTS public.gifticons CASCADE;
 DROP TABLE IF EXISTS public.events CASCADE;
 
 -- 2. EVENTS 테이블 생성 (통합 정의)
@@ -44,30 +43,7 @@ CREATE POLICY "Users can update their own events" ON public.events FOR UPDATE US
 CREATE POLICY "Users can delete their own events" ON public.events FOR DELETE USING (auth.uid() = user_id);
 
 
--- 3. GIFTICONS 테이블 생성
-create table public.gifticons (
-    id uuid default gen_random_uuid() primary key,
-    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-    user_id uuid references auth.users(id) default auth.uid(),
-    product_name text not null,
-    sender_name text,
-    expiry_date date not null,
-    image_url text,
-    status text default 'available',
-    estimated_price integer default 0,
-    barcode_number text
-);
-
-alter table public.gifticons enable row level security;
-
--- ✅ GIFTICONS RLS 정책
-CREATE POLICY "Users can view their own gifticons" ON public.gifticons FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "Users can insert their own gifticons" ON public.gifticons FOR INSERT WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users can update their own gifticons" ON public.gifticons FOR UPDATE USING (auth.uid() = user_id);
-CREATE POLICY "Users can delete their own gifticons" ON public.gifticons FOR DELETE USING (auth.uid() = user_id);
-
-
--- 4. POLLS & VOTES (투표 기능)
+-- 3. POLLS & VOTES (투표 기능)
 create table public.polls (
     id uuid default gen_random_uuid() primary key,
     created_at timestamp with time zone default timezone('utc'::text, now()) not null,
@@ -101,7 +77,7 @@ CREATE POLICY "Anyone can view votes" ON public.votes FOR SELECT USING (true);
 create index votes_poll_id_idx on public.votes(poll_id);
 
 
--- 5. LEDGER (가계부) 테이블 생성
+-- 4. LEDGER (가계부) 테이블 생성
 -- 별도 ALTER 구문 없이 깔끔하게 정의
 CREATE TABLE public.ledger (
   id uuid default gen_random_uuid() primary key,

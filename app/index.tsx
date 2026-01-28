@@ -3,7 +3,7 @@ import { Svg, Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
 import { Colors } from '../constants/Colors';
 import { useRouter } from 'expo-router';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase, getTodayEvents, getUpcomingEvents, fetchPeriodStats, EventRecord } from '../services/supabase';
 import { getEventEmoji } from '../services/EmojiService';
 import { Ionicons } from '@expo/vector-icons';
@@ -59,18 +59,33 @@ export default function Home() {
         router.push('/scan/universal');
     };
 
-    // D-Day 계산
-    const getDDay = (dateStr: string) => {
+    // D-Day 계산 (하루 단위 캐시)
+    const todayKey = new Date().toISOString().split('T')[0];
+    const getDDay = useMemo(() => {
+        const cache = new Map<string, string>();
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        const eventDate = new Date(dateStr);
-        eventDate.setHours(0, 0, 0, 0);
-        const diffTime = eventDate.getTime() - today.getTime();
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        if (diffDays === 0) return 'D-Day';
-        if (diffDays < 0) return `D + ${Math.abs(diffDays)} `;
-        return `D - ${diffDays} `;
-    };
+        const todayMs = today.getTime();
+
+        return (dateStr: string) => {
+            const cacheKey = `${todayKey}:${dateStr}`;
+            const cached = cache.get(cacheKey);
+            if (cached) return cached;
+
+            const eventDate = new Date(dateStr);
+            eventDate.setHours(0, 0, 0, 0);
+            const diffTime = eventDate.getTime() - todayMs;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+            let result = '';
+            if (diffDays === 0) result = 'D-Day';
+            else if (diffDays < 0) result = `D + ${Math.abs(diffDays)} `;
+            else result = `D - ${diffDays} `;
+
+            cache.set(cacheKey, result);
+            return result;
+        };
+    }, [todayKey]);
 
     useEffect(() => {
         const createRipple = (anim: Animated.Value, delay: number) => {
@@ -104,7 +119,7 @@ export default function Home() {
         };
     }, []);
 
-    const fetchEvents = async () => {
+    const fetchEvents = useCallback(async () => {
         try {
             const [todayData, upcomingData] = await Promise.all([
                 getTodayEvents(),
@@ -115,9 +130,9 @@ export default function Home() {
         } catch (error) {
             console.error('Failed to load events:', error);
         }
-    };
+    }, []);
 
-    const fetchDashboardStats = async () => {
+    const fetchDashboardStats = useCallback(async () => {
         try {
             // Calculate Dates
             const now = new Date();
@@ -152,19 +167,19 @@ export default function Home() {
         } catch (error) {
             console.error('Error fetching dashboard stats:', error);
         }
-    };
+    }, []);
 
-    const loadHomeData = async () => {
+    const loadHomeData = useCallback(async () => {
         await Promise.all([
             fetchDashboardStats(),
             fetchEvents()
         ]);
-    };
+    }, [fetchDashboardStats, fetchEvents]);
 
     useFocusEffect(
         useCallback(() => {
             loadHomeData();
-        }, [])
+        }, [loadHomeData])
     );
 
     const onRefresh = async () => {
@@ -209,71 +224,76 @@ export default function Home() {
                     </Text>
                 </View>
 
-                <View style={[styles.heroContainer, { marginTop: 40 }]}>
-                    <Animated.View style={[
-                        styles.ripple,
-                        {
-                            transform: [{
-                                scale: ripple1.interpolate({
+                {/* ✅ New Geometric Hero Section */}
+                <View style={styles.heroSection}>
+                    <View style={styles.heroWrapper}>
+                        {/* 1. Ripples (Absolute, Centered) */}
+                        <Animated.View style={[
+                            styles.ripple,
+                            {
+                                transform: [{
+                                    scale: ripple1.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [1, 1.7]
+                                    })
+                                }],
+                                opacity: ripple1.interpolate({
                                     inputRange: [0, 1],
-                                    outputRange: [1, 1.7] // Softer max scale
+                                    outputRange: [0.2, 0]
                                 })
-                            }],
-                            opacity: ripple1.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [0.2, 0] // Linear fade out
-                            })
-                        }
-                    ]} />
-                    <Animated.View style={[
-                        styles.ripple,
-                        {
-                            transform: [{
-                                scale: ripple2.interpolate({
+                            }
+                        ]} />
+                        <Animated.View style={[
+                            styles.ripple,
+                            {
+                                transform: [{
+                                    scale: ripple2.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [1, 1.7]
+                                    })
+                                }],
+                                opacity: ripple2.interpolate({
                                     inputRange: [0, 1],
-                                    outputRange: [1, 1.7]
+                                    outputRange: [0.2, 0]
                                 })
-                            }],
-                            opacity: ripple2.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [0.2, 0]
-                            })
-                        }
-                    ]} />
+                            }
+                        ]} />
 
-                    {/* ✅ Static Glow View for Centralized Bloom */}
-                    <View style={{ position: 'absolute', top: -20, left: -20, width: 240, height: 240, justifyContent: 'center', alignItems: 'center', zIndex: 0 }}>
-                        <Svg height="240" width="240" viewBox="0 0 240 240">
-                            <Defs>
-                                <RadialGradient id="grad" cx="120" cy="120" rx="120" ry="120" fx="120" fy="120" gradientUnits="userSpaceOnUse">
-                                    <Stop offset="0.3" stopColor={colors.orange} stopOpacity="0.4" />
-                                    <Stop offset="1" stopColor={colors.orange} stopOpacity="0" />
-                                </RadialGradient>
-                            </Defs>
-                            <Circle cx="120" cy="120" r="120" fill="url(#grad)" />
-                        </Svg>
+                        {/* 2. Static Glow (Absolute, Centered) */}
+                        <View style={styles.staticGlowContainer}>
+                            <Svg height="240" width="240" viewBox="0 0 240 240">
+                                <Defs>
+                                    <RadialGradient id="grad" cx="120" cy="120" rx="120" ry="120" fx="120" fy="120" gradientUnits="userSpaceOnUse">
+                                        <Stop offset="0.3" stopColor={colors.orange} stopOpacity="0.4" />
+                                        <Stop offset="1" stopColor={colors.orange} stopOpacity="0" />
+                                    </RadialGradient>
+                                </Defs>
+                                <Circle cx="120" cy="120" r="120" fill="url(#grad)" />
+                            </Svg>
+                        </View>
+
+                        {/* 3. Main Button (Centered) */}
+                        <Pressable
+                            onPressIn={handlePressIn}
+                            onPressOut={handlePressOut}
+                            onPress={handleScanPress}
+                        >
+                            <Animated.View style={[styles.heroButton, { backgroundColor: colors.orange, transform: [{ scale: scaleValue }], shadowColor: colors.orange, shadowOpacity: 0.6, shadowRadius: 30, shadowOffset: { width: 0, height: 0 }, elevation: 0 }]}>
+                                <Ionicons name="camera" size={48} color={Colors.white} />
+                                <Text style={styles.heroButtonText}>지금 사진을 찍거나</Text>
+                                <Text style={styles.heroButtonText}>이미지를 올려보세요</Text>
+                            </Animated.View>
+                        </Pressable>
                     </View>
 
-                    <Pressable
-                        onPressIn={handlePressIn}
-                        onPressOut={handlePressOut}
-                        onPress={handleScanPress}
-                    >
-                        <Animated.View style={[styles.heroButton, { backgroundColor: colors.orange, transform: [{ scale: scaleValue }], shadowColor: colors.orange, shadowOpacity: 0.6, shadowRadius: 30, shadowOffset: { width: 0, height: 0 }, elevation: 0 }]}>
-                            <Ionicons name="camera" size={48} color={Colors.white} />
-                            <Text style={styles.heroButtonText}>지금 사진을 찍거나</Text>
-                            <Text style={styles.heroButtonText}>이미지를 올려보세요</Text>
-                        </Animated.View>
-                    </Pressable>
-
-                    {/* ✅ Voice Register CTA */}
+                    {/* ✅ Voice CTA (Redesigned: Emoji + Text Block) */}
                     <TouchableOpacity
                         onPress={() => router.push({ pathname: '/scan/universal', params: { mode: 'voice' } })}
-                        style={{ marginTop: 12, paddingVertical: 8, paddingHorizontal: 12 }}
+                        style={styles.voiceCtaContainer}
+                        activeOpacity={0.7}
                     >
-                        <Text style={{ fontFamily: 'Pretendard-Medium', fontSize: 13, color: colors.orange, textDecorationLine: 'underline' }}>
-                            🎙️ 음성으로 등록하기
-                        </Text>
+                        <Text style={styles.voiceEmoji}>🎙️</Text>
+                        <Text style={styles.voiceText}>음성으로 등록하기</Text>
                     </TouchableOpacity>
                 </View>
                 {/* Quick Links */}
@@ -296,36 +316,50 @@ export default function Home() {
                 </View>
 
                 {/* Monthly Report Card */}
+                {/* Monthly Summary Bar (Redesigned) */}
                 <TouchableOpacity
-                    style={[styles.reportCard, { backgroundColor: colors.card }]}
+                    style={[styles.summaryCard, { backgroundColor: colors.card }]}
                     onPress={() => router.push('/history')}
                     activeOpacity={0.8}
                 >
-                    <View style={styles.reportHeader}>
-                        <View style={{ gap: 4 }}>
-                            <Text style={[styles.reportTitle, { color: colors.text }]}>{new Date().getFullYear()}년 {new Date().getMonth() + 1}월 지출</Text>
-                            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-                                <Text style={[styles.statValueOut, { color: colors.danger }]}>
-                                    -{stats.totalGiven.toLocaleString()}원
-                                </Text>
-                                {stats.pendingGiven > 0 && (
-                                    <Text style={{ fontSize: 13, color: colors.subText }}>
-                                        (송금 예정 {stats.pendingGiven.toLocaleString()}원)
-                                    </Text>
-                                )}
-                            </View>
-                            <Text style={[styles.pendingText, { color: stats.spendingDiff > 0 ? colors.danger : colors.success }]}>
-                                {stats.spendingDiff > 0 ? '▲' : '▼'} 지난달 대비 {Math.abs(stats.spendingDiff).toLocaleString()}원 {stats.spendingDiff > 0 ? '더 씀' : '덜 씀'}
+                    {/* Tier 1: Caption */}
+                    <Text style={[styles.summaryCaption, { color: colors.subText }]}>{new Date().getFullYear()}년 {new Date().getMonth() + 1}월</Text>
+
+                    {/* Tier 2: Summary Row (Spending | Income) */}
+                    <View style={styles.summaryRow}>
+                        {/* Spending Group */}
+                        <View style={styles.statGroup}>
+                            <Text style={[styles.statLabel, { color: colors.subText }]}>지출</Text>
+                            <Text style={[styles.statValue, { color: colors.danger, fontFamily: 'Pretendard-Bold', fontSize: 18 }]}>
+                                -{stats.totalGiven.toLocaleString()}원
                             </Text>
                         </View>
-                        <Ionicons name="chevron-forward" size={18} color={colors.subText} />
+
+                        {/* Divider */}
+                        <View style={[styles.summaryDivider, { backgroundColor: colors.border }]} />
+
+                        {/* Income Group */}
+                        <View style={styles.statGroup}>
+                            <Text style={[styles.statLabel, { color: colors.subText }]}>수입</Text>
+                            <Text style={[styles.statValue, { color: colors.success, fontFamily: 'Pretendard-Bold', fontSize: 18 }]}>
+                                +{stats.totalReceived.toLocaleString()}원
+                            </Text>
+                        </View>
+
+                        {/* Chevron (Right Edge) */}
+                        <Ionicons name="chevron-forward" size={18} color={colors.subText} style={{ opacity: 0.7 }} />
                     </View>
 
-                    <View style={styles.statsRow}>
-                        <View style={styles.statItem}>
-                            <Text style={[styles.statLabel, { color: colors.subText }]}>수입</Text>
-                            <Text style={[styles.statValueIn, { color: colors.success }]}>+{stats.totalReceived.toLocaleString()}</Text>
-                        </View>
+                    {/* Tier 3: Meta Info (Diff + Pending) */}
+                    <View style={styles.metaInfoRow}>
+                        <Text style={[styles.pendingText, { color: stats.spendingDiff > 0 ? colors.danger : colors.success }]}>
+                            {stats.spendingDiff > 0 ? '▲' : '▼'} 지난달 대비 {Math.abs(stats.spendingDiff).toLocaleString()}원 {stats.spendingDiff > 0 ? '더 씀' : '덜 씀'}
+                        </Text>
+                        {stats.pendingGiven > 0 && (
+                            <Text style={{ fontSize: 12, color: colors.subText, marginLeft: 8 }}>
+                                (송금 예정 {stats.pendingGiven.toLocaleString()}원)
+                            </Text>
+                        )}
                     </View>
                 </TouchableOpacity>
 
@@ -361,6 +395,11 @@ export default function Home() {
                                     numberOfLines={1}
                                 >
                                     {event.name || '내역'}
+                                    {event.source === 'events' && event.location && (
+                                        <Text style={{ color: colors.subText, fontFamily: 'Pretendard-Medium' }}>
+                                            {' / '}{event.location}
+                                        </Text>
+                                    )}
                                 </Text>
                                 {event.amount && event.amount > 0 ? (
                                     <Text style={[styles.timelineAmount, event.isReceived ? { color: colors.success } : { color: colors.danger }]}>
@@ -451,7 +490,7 @@ const styles = StyleSheet.create({
     // Slogan
     sloganContainer: {
         alignItems: 'center',
-        marginBottom: 24, // 48 -> 24 줄임
+        marginBottom: 10, // 24 -> 10 (Slogan to Button gap reduced)
         paddingHorizontal: 20,
     },
     sloganText: {
@@ -467,46 +506,70 @@ const styles = StyleSheet.create({
         color: Colors.orange,
     },
 
-    // Hero Button
-    heroContainer: {
+    // Hero Section (New Layout)
+    heroSection: {
+        alignItems: 'center',
+        marginTop: 20, // 40 -> 20 (Button moved up)
+        marginBottom: 40,
+    },
+    heroWrapper: {
+        width: 240,  // GLOW_SIZE
+        height: 240, // GLOW_SIZE
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 40, // 24 -> 40 복원 (Large)
-        width: 200, // 160 -> 200 복원 (Large)
-        height: 200,
+        position: 'relative', // Context for absolute children
     },
     ripple: {
         position: 'absolute',
-        width: 160,
+        width: 160, // HERO_SIZE
         height: 160,
         borderRadius: 80,
-        backgroundColor: Colors.orange, // Solid fill
-        top: 20,
-        left: 20,
+        backgroundColor: Colors.orange,
+        // Centered by Flexbox in heroWrapper, no top/left needed if we use absolute fill or center alignment
+        // But since heroWrapper is 240 and ripple is 160:
+        // top = (240 - 160) / 2 = 40
+        top: 40,
+        left: 40,
+        zIndex: 0,
+    },
+    staticGlowContainer: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: 240,
+        height: 240,
+        justifyContent: 'center',
+        alignItems: 'center',
         zIndex: 0,
     },
     heroButton: {
-        width: 160, // 140 -> 160
+        width: 160,
         height: 160,
-        borderRadius: 80, // 70 -> 80
+        borderRadius: 80,
         backgroundColor: Colors.orange,
         alignItems: 'center',
         justifyContent: 'center',
         shadowColor: Colors.orange,
-        shadowOffset: { width: 0, height: 0 }, // Centered Glow
+        shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.6,
         shadowRadius: 30,
-        elevation: 0, // Android elevation Removed
+        elevation: 0,
         zIndex: 10,
     },
-    staticGlow: {
-        position: 'absolute',
-        width: 190,
-        height: 190,
-        borderRadius: 95,
-        backgroundColor: Colors.orange,
-        opacity: 0.5,
-        zIndex: 0,
+    voiceCtaContainer: {
+        marginTop: 24, // Gap below the glow geometric area
+        alignItems: 'center',
+        paddingVertical: 10,
+        paddingHorizontal: 20,
+    },
+    voiceEmoji: {
+        fontSize: 28,
+        marginBottom: 4,
+    },
+    voiceText: {
+        fontFamily: 'Pretendard-Bold', // Bold emphasis
+        fontSize: 16,               // Larger text
+        color: Colors.orange,
     },
     heroButtonText: {
         fontFamily: 'Pretendard-Medium',
@@ -548,53 +611,55 @@ const styles = StyleSheet.create({
     },
 
     // Report Card
-    reportCard: {
-        backgroundColor: 'rgba(255,255,255,0.08)',
+    // Summary Card (Redesigned)
+    summaryCard: {
         borderRadius: 20,
-        padding: 20,
+        paddingHorizontal: 20,
+        paddingVertical: 16,
         marginHorizontal: 20,
         width: '90%',
         marginBottom: 20,
     },
-    reportHeader: {
+    summaryCaption: {
+        fontFamily: 'Pretendard-Medium',
+        fontSize: 13,
+        marginBottom: 12, // Space between Caption and Row
+    },
+    summaryRow: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 16,
+        justifyContent: 'space-between',
+        marginBottom: 12, // Space between Row and Meta
     },
-    reportTitle: {
-        fontFamily: 'Pretendard-Bold',
-        fontSize: 16,
-        color: Colors.white,
-    },
-    statsRow: {
-        flexDirection: 'row',
-        gap: 24,
-    },
-    statItem: {
-        flex: 1,
+    statGroup: {
+        flex: 1, // Distribute space
+        justifyContent: 'center',
     },
     statLabel: {
         fontFamily: 'Pretendard-Regular',
-        fontSize: 13,
-        color: Colors.subText,
-        marginBottom: 4,
+        fontSize: 12,
+        marginBottom: 2,
     },
-    statValueOut: {
+    statValue: {
+        // Base style, mostly overridden inline for colors
         fontFamily: 'Pretendard-Bold',
-        fontSize: 20,
-        color: '#F87171',
+        fontSize: 18,
     },
-    statValueIn: {
-        fontFamily: 'Pretendard-Bold',
-        fontSize: 20,
-        color: '#4ADE80',
+    summaryDivider: {
+        width: 1,
+        height: 24, // Visual separator height
+        marginHorizontal: 16,
+    },
+    metaInfoRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        // Optional border top if desired, but sticking to clean layout for now
+        paddingTop: 0,
     },
     pendingText: {
         fontFamily: 'Pretendard-Medium',
         fontSize: 12,
-        color: Colors.orange,
-        marginTop: 4,
+        marginRight: 4,
     },
 
     // Timeline

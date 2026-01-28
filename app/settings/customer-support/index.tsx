@@ -164,6 +164,10 @@ export default function CustomerSupportScreen() {
                             data={notices}
                             renderItem={renderNoticeItem}
                             keyExtractor={item => item.id}
+                            initialNumToRender={8}
+                            windowSize={5}
+                            maxToRenderPerBatch={10}
+                            removeClippedSubviews
                             contentContainerStyle={styles.listContent}
                             ListEmptyComponent={
                                 <View style={styles.emptyState}>
@@ -176,6 +180,10 @@ export default function CustomerSupportScreen() {
                             data={inquiries}
                             renderItem={renderInquiryItem}
                             keyExtractor={item => item.id}
+                            initialNumToRender={8}
+                            windowSize={5}
+                            maxToRenderPerBatch={10}
+                            removeClippedSubviews
                             contentContainerStyle={styles.listContent}
                             ListEmptyComponent={
                                 <View style={styles.emptyState}>

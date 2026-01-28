@@ -19,23 +19,3 @@ export interface EventRecord {
     color?: string; // 캘린더 색상 (외부 일정 등)
 }
 
-export interface GifticonRecord {
-    productName: string;
-    senderName?: string;
-    expiryDate: string;
-    imageUrl?: string;
-    status: 'available' | 'used';
-    estimatedPrice: number;
-    barcode_number?: string;
-}
-
-export interface GifticonItem {
-    id: string;
-    productName: string;
-    senderName?: string;
-    expiryDate: string;
-    imageUrl?: string;
-    status: 'available' | 'used';
-    estimatedPrice: number;
-    barcodeNumber?: string;
-}

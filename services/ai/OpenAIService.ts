@@ -5,8 +5,8 @@ import { OCR_TEST_SAMPLES } from './TestSamples';
 
 const PIPELINE_VERSION = "2.3.0-structured";
 
-// Core Types (7) + Unknown
-export type ScanType = 'GIFTICON' | 'INVITATION' | 'OBITUARY' | 'APPOINTMENT' | 'STORE_PAYMENT' | 'BANK_TRANSFER' | 'BILL' | 'SOCIAL' | 'RECEIPT' | 'TRANSFER' | 'UNKNOWN';
+// Core Types + Unknown
+export type ScanType = 'INVITATION' | 'OBITUARY' | 'APPOINTMENT' | 'STORE_PAYMENT' | 'BANK_TRANSFER' | 'BILL' | 'SOCIAL' | 'RECEIPT' | 'TRANSFER' | 'UNKNOWN';
 
 import { APP_CATEGORIES, CATEGORY_MAP, CategoryGroupType } from '../../constants/categories';
 
@@ -29,7 +29,6 @@ export interface BaseAnalysisResult {
     };
 }
 
-export interface GifticonResult extends BaseAnalysisResult { type: 'GIFTICON'; productName: string; brandName: string; estimatedPrice: number; expiryDate?: string; barcodeNumber?: string; redeemCode?: string; }
 export interface InvitationResult extends BaseAnalysisResult { type: 'INVITATION'; eventDate: string; eventLocation: string; address?: string; eventType: 'wedding' | 'funeral' | 'birthday' | 'event'; mainName?: string; hostNames?: string[]; recommendedAmount?: number; recommendationReason?: string; relation?: string; accountNumber?: string; }
 export interface ObituaryResult extends BaseAnalysisResult { type: 'OBITUARY'; deceased: string; relationship?: string; funeralLocation: string; eventDate: string; recommendedAmount?: number; }
 export interface BankTransactionResult extends BaseAnalysisResult { type: 'BANK_TRANSFER'; amount: number; transactionType: 'deposit' | 'withdrawal'; targetName: string; balanceAfter?: number; bankName?: string; memo?: string; category?: string; subCategory?: string; isUtility?: boolean; }
@@ -39,7 +38,7 @@ export interface SocialResult extends BaseAnalysisResult { type: 'SOCIAL'; amoun
 export interface AppointmentResult extends BaseAnalysisResult { type: 'APPOINTMENT'; title: string; location: string; memo?: string; }
 export interface UnknownResult extends BaseAnalysisResult { type: 'UNKNOWN'; }
 
-export type ScannedData = GifticonResult | InvitationResult | ObituaryResult | BankTransactionResult | StorePaymentResult | BillResult | SocialResult | AppointmentResult | UnknownResult | ReceiptResult | TransferResult;
+export type ScannedData = InvitationResult | ObituaryResult | BankTransactionResult | StorePaymentResult | BillResult | SocialResult | AppointmentResult | UnknownResult | ReceiptResult | TransferResult;
 export interface ReceiptResult extends Omit<StorePaymentResult, 'type'> { type: 'RECEIPT'; } // Legacy alias
 export interface TransferResult extends BaseAnalysisResult { type: 'TRANSFER'; amount: number; isReceived?: boolean; memo?: string; } // Legacy alias
 
@@ -48,6 +47,7 @@ const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY ?? Constants.expoC
 // Session-level cache for few-shots
 const SESSION_SEED = Date.now() % 10000;
 let cachedFewShots: any[] | null = null;
+let cachedVoiceFewShots: any[] | null = null;
 let cachedStaticSamples: any[] | null = null;
 let fewShotCacheTimestamp = 0;
 const FEWSHOT_CACHE_TTL_MS = 60000; // 1분
@@ -76,10 +76,6 @@ const FEWSHOT_ALLOWED_KEYS = new Set<string>([
     'place_name',
     'title',
     'memo',
-    'item_name',
-    'brand',
-    'expiry_date',
-    'redeem_code',
     'bill_name',
     'due_date',
     'virtual_account',
@@ -149,10 +145,6 @@ const COMMON_TRANSACTION_PROPERTIES = {
     place_name: { type: "string" },
     title: { type: "string" },
     memo: { type: "string" },
-    item_name: { type: "string" },
-    brand: { type: "string" },
-    expiry_date: { type: "string" },
-    redeem_code: { type: "string" },
     bill_name: { type: "string" },
     due_date: { type: "string" },
     virtual_account: { type: "string" },
@@ -175,7 +167,7 @@ const OCR_RESPONSE_SCHEMA = {
                     properties: {
                         type: {
                             type: "string",
-                            enum: ["GIFTICON", "INVITATION", "OBITUARY", "APPOINTMENT", "STORE_PAYMENT", "BANK_TRANSFER", "BILL", "SOCIAL", "UNKNOWN"]
+                            enum: ["INVITATION", "OBITUARY", "APPOINTMENT", "STORE_PAYMENT", "BANK_TRANSFER", "BILL", "SOCIAL", "UNKNOWN"]
                         },
                         confidence: { type: "number" },
                         evidence: { type: "array", items: { type: "string" } },
@@ -199,10 +191,6 @@ const OCR_RESPONSE_SCHEMA = {
                         place_name: { type: "string" },
                         title: { type: "string" },
                         memo: { type: "string" },
-                        item_name: { type: "string" },
-                        brand: { type: "string" },
-                        expiry_date: { type: "string" },
-                        redeem_code: { type: "string" },
                         bill_name: { type: "string" },
                         due_date: { type: "string" },
                         virtual_account: { type: "string" },
@@ -221,6 +209,28 @@ const OCR_RESPONSE_SCHEMA = {
 } as const;
 
 const RESPONSE_FORMAT = { type: "json_schema", json_schema: OCR_RESPONSE_SCHEMA } as const;
+
+const VOICE_SPECIFIC_PROMPT = `
+⚠️ VOICE INPUT SPECIFIC RULES:
+
+1. **입력 전처리 완료 상태**:
+   - VoiceNormalizer가 이미 처리함: "낼"→"내일", "삼만원"→"30000"
+   - 상대 요일도 절대 날짜로 변환되었을 수 있음
+   - 추가 정규화 불필요, 제공된 텍스트 그대로 사용
+
+2. **불완전 입력 허용**:
+   - 음성은 간결하므로 일부 필드 누락 허용
+   - 예: "내일 3시 강남" → APPOINTMENT (title 누락 허용)
+
+3. **STT 전사 오류 보정**:
+   - 동음이의어: "산만원" → "삼만원" (30000)
+   - 발음 유사: "강나역" → "강남역"
+   - 불확실 시 evidence에 "stt_ambiguous" 추가
+
+4. **자연어 패턴 우선**:
+   - 키워드 매칭보다 의도 파악 우선
+   - "친구 결혼식" → INVITATION (event_type="wedding")
+`;
 
 type PromptMode = 'text' | 'vision';
 
@@ -251,16 +261,22 @@ function buildSystemPrompt(options: {
     dayOfWeek: string;
     fewShotExamples: string;
     mode: PromptMode;
+    isVoiceInput?: boolean;
 }): string {
     const inputHint = options.mode === 'text'
-        ? 'Input is OCR text. Use only the provided text.'
+        ? (options.isVoiceInput
+            ? 'Input is VOICED TEXT (STT Result). It may include colloquialisms or STT errors.'
+            : 'Input is OCR text. Use only the provided text.')
         : 'Input is an image. Extract text from the image before analysis.';
+
+    const voicePrompt = options.isVoiceInput ? VOICE_SPECIFIC_PROMPT : '';
 
     return `
 You are a financial AI expert for Korean financial and event documents.
 TODAY = ${options.referenceDate} (${options.dayOfWeek})
 Use TODAY only if no anchor date exists.
 ${inputHint}
+${voicePrompt}
 
 OUTPUT
 - Return ONLY valid JSON that matches the schema.
@@ -274,6 +290,10 @@ MANDATORY FIELDS
 - BANK_TRANSFER: amount + direction (in/out)
 - INVITATION: date_or_datetime + place_name
 - APPOINTMENT: date_or_datetime + place_name + title
+  * place_name: MUST extract ANY location reference, including informal ones
+  * Examples: "할머니네" (Grandma's), "친구집" (Friend's house), "우리집" (My home), 
+              "스타벅스" (Starbucks), "강남역" (Gangnam Station)
+  * Do NOT ignore place-like words just because they lack formal addresses
 
 EXTRACTION RULES
 - CORE EXTRACTION PRIORITIES (HIGHEST IMPORTANCE):
@@ -281,6 +301,17 @@ EXTRACTION RULES
   2. WHERE (Merchant/Source): Merchant Name for payments, Sender/Bank for deposits.
   3. HOW MUCH (Amount): Exact amount (repair broken numbers if needed).
   * Focus on extracting these 3 fields ACCURATELY before anything else.
+
+- RELATIVE DATE CALCULATION (CRITICAL):
+  * "내일" (Tomorrow) -> TODAY + 1 day
+  * "모레" (Day after tomorrow) -> TODAY + 2 days
+  * "어제" (Yesterday) -> TODAY - 1 day
+  * "그저께" (Day before yesterday) -> TODAY - 2 days
+  * "다음 주 [요일]" (Next [Day]) -> Calculate date based on TODAY + 7 days logic
+  * "지난 주 [요일]" (Last [Day]) -> Calculate date based on TODAY - 7 days logic
+  * "이번 주 [요일]" (This [Day]) -> Calculate date within the current week containing TODAY
+  * Combined expressions like "내일 저녁", "내일 7시" MUST be converted to absolute "YYYY-MM-DD HH:mm".
+  * NOTE: If a BLOCK LABEL (HEADER_RESOLVED_DATETIME) exists, use that. Otherwise, use TODAY as the anchor for these calculations.
 
 - Evidence: include short raw snippets (2-6 words) that justify type/amount/date.
 - Amount conflict: prefer amounts near "승인금액", "합계", "총액"; else largest; else last.
@@ -376,6 +407,12 @@ EXTRACTION RULES
 DATE NORMALIZATION
 - Combine split date/time into "YYYY-MM-DD HH:mm".
 - If year is missing, assume the current year.
+- If no block-level date labels exist, resolve relative dates using TODAY:
+  - "내일" = TODAY + 1 day
+  - "모레" = TODAY + 2 days
+  - "어제" = TODAY - 1 day
+  - "다음 주 [요일]" = the next occurrence in the following week
+  - "내일 저녁/아침/오전/오후" must be converted to absolute date/time
 
 ⚠️ TIMELINE RECONSTRUCTION RULE (CRITICAL):
 
@@ -388,6 +425,7 @@ Some blocks have resolved date labels:
 If a block has 'HEADER_RESOLVED_DATETIME' or 'ANCHOR_ABSOLUTE_DATETIME',
 you MUST use that value as the true date/time for that block.
 Do NOT re-interpret relative dates using TODAY. Trust the labels.
+If NO such labels exist, resolve relative expressions using TODAY as the anchor.
 
 Example:
 Input:
@@ -431,24 +469,36 @@ ${options.fewShotExamples}
 `;
 }
 
-const fetchDynamicFewShots = async (): Promise<any[]> => {
+const fetchDynamicFewShots = async (isVoiceInput?: boolean): Promise<any[]> => {
     // 캐시 유효성 검사
     const now = Date.now();
-    if (cachedFewShots && now - fewShotCacheTimestamp < FEWSHOT_CACHE_TTL_MS) {
-        console.log('[OpenAI] Using cached few-shots');
-        return cachedFewShots;
+    const targetCache = isVoiceInput ? cachedVoiceFewShots : cachedFewShots;
+
+    if (targetCache && now - fewShotCacheTimestamp < FEWSHOT_CACHE_TTL_MS) {
+        console.log(`[OpenAI] Using cached few-shots (Voice: ${isVoiceInput})`);
+        return targetCache;
     }
 
     console.time('[OpenAI] fetchDynamicFewShots');
     const startTime = Date.now();
     try {
-        const dbPromise = supabase
+        let query = supabase
             .from('approved_fewshots')
             .select('output_json')
             .eq('is_active', true)
             .order('priority', { ascending: false })
-            .limit(15)
-            .then(res => res.data?.map(d => d.output_json) || []);
+            .limit(15);
+
+        if (isVoiceInput) {
+            query = query.eq('input_type', 'VOICE');
+        } else {
+            // OCR (Existing) - input_type is null or NOT VOICE
+            // For backward compatibility, assume NULL is OCR.
+            // If we have mixed types, we might want .or('input_type.is.null,input_type.neq.VOICE')
+            query = query.is('input_type', null);
+        }
+
+        const dbPromise = query.then(res => res.data?.map(d => d.output_json) || []);
 
         const timeoutPromise = new Promise<any[]>((resolve) =>
             setTimeout(() => {
@@ -459,25 +509,29 @@ const fetchDynamicFewShots = async (): Promise<any[]> => {
 
         const result = await Promise.race([dbPromise, timeoutPromise]);
         const elapsed = Date.now() - startTime;
-        console.log(`[OpenAI] DB Fetch: ${elapsed}ms, Items: ${result.length}`);
+        console.log(`[OpenAI] DB Fetch (Voice: ${isVoiceInput}): ${elapsed}ms, Items: ${result.length}`);
 
         if (result.length > 0) {
-            cachedFewShots = result;
+            if (isVoiceInput) {
+                cachedVoiceFewShots = result;
+            } else {
+                cachedFewShots = result;
+            }
             fewShotCacheTimestamp = now;
         }
         // DB 실패 시 기존 캐시 유지
-        return result.length > 0 ? result : (cachedFewShots || []);
+        return result.length > 0 ? result : (targetCache || []);
     } catch (e) {
         console.warn('Failed to fetch dynamic few-shots:', e);
-        return cachedFewShots || []; // 에러 시 기존 캐시 반환
+        return targetCache || []; // 에러 시 기존 캐시 반환
     } finally {
         console.timeEnd('[OpenAI] fetchDynamicFewShots');
     }
 };
 
-const getFewShotPrompt = async (): Promise<string> => {
+const getFewShotPrompt = async (isVoiceInput?: boolean): Promise<string> => {
     // 1. Get Dynamic (High Priority) - 최대 15개
-    const dynamic = await fetchDynamicFewShots();
+    const dynamic = await fetchDynamicFewShots(isVoiceInput);
 
     // 2. Get Static (Fill remaining slots up to 20 total)
     const needed = Math.max(0, 20 - dynamic.length);
@@ -667,7 +721,7 @@ function cleanJsonString(str: string): string {
 // Text Analysis (Structured Extraction)
 // ========================================
 
-export async function analyzeImageText(text: string, options?: { ocrScore?: number }): Promise<ScannedData[]> {
+export async function analyzeImageText(text: string, options?: { ocrScore?: number; isVoiceInput?: boolean }): Promise<ScannedData[]> {
     const logger = getCurrentOcrLogger();
     if (!OPENAI_API_KEY) throw new Error("OpenAI API Key is missing.");
 
@@ -689,13 +743,13 @@ export async function analyzeImageText(text: string, options?: { ocrScore?: numb
         // 텍스트 분석 타임아웃 50초로 증가 (OpenAI 모델 응답 시간 확보)
         const timeoutId = setTimeout(() => controller.abort(), 50000);
 
-        const fewShotExamples = await getFewShotPrompt();
+        const fewShotExamples = await getFewShotPrompt(options?.isVoiceInput);
 
         // 오늘 날짜 주입 (Vision과 동일하게)
         const today = new Date();
         const referenceDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
         const dayOfWeek = ['일', '월', '화', '수', '목', '금', '토'][today.getDay()];
-        const systemPrompt = buildSystemPrompt({ referenceDate, dayOfWeek, fewShotExamples, mode: 'text' });
+        const systemPrompt = buildSystemPrompt({ referenceDate, dayOfWeek, fewShotExamples, mode: 'text', isVoiceInput: options?.isVoiceInput });
 
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
@@ -786,7 +840,7 @@ export async function analyzeImageText(text: string, options?: { ocrScore?: numb
                 finalType = 'UNKNOWN';
             }
 
-            const normalizedDate = normalizeDateTime(item.date_or_datetime || item.expiry_date || item.due_date);
+            const normalizedDate = normalizeDateTime(item.date_or_datetime || item.due_date);
 
             // Common Data Construction
             const commonData: BaseAnalysisResult = {
@@ -800,17 +854,7 @@ export async function analyzeImageText(text: string, options?: { ocrScore?: numb
             };
 
             // Mapping based on type
-            if (finalType === 'GIFTICON') {
-                scannedDataArray.push({
-                    ...commonData,
-                    type: 'GIFTICON',
-                    productName: item.item_name,
-                    brandName: item.brand,
-                    estimatedPrice: item.amount,
-                    expiryDate: normalizeDateTime(item.expiry_date) || item.expiry_date,
-                    redeemCode: item.redeem_code
-                } as GifticonResult);
-            } else if (finalType === 'INVITATION') {
+            if (finalType === 'INVITATION') {
                 // Name Extraction Strategy
                 let mainName: string | undefined;
 
@@ -977,7 +1021,7 @@ export async function analyzeImageText(text: string, options?: { ocrScore?: numb
             }
         }
 
-        throw e; // 예외를 다시 throw하여 GifticonAnalysisService에서 처리하도록 함
+        throw e; // 예외를 다시 throw하여 상위 로직에서 처리하도록 함
     }
 }
 
@@ -1143,14 +1187,13 @@ export async function analyzeImageVisual(base64Image: string): Promise<ScannedDa
                 evidence: result.evidence || [],
                 warnings,
                 source: 'PHOTO',
-                date: normalizeDateTime(result.date_or_datetime || result.expiry_date || result.due_date)
+                date: normalizeDateTime(result.date_or_datetime || result.due_date)
             };
 
             // Simplified Mapping
             let finalResult: ScannedData;
 
-            if (result.type === 'GIFTICON') finalResult = { ...commonData, type: 'GIFTICON', productName: result.item_name, brandName: result.brand, estimatedPrice: result.amount, expiryDate: normalizeDateTime(result.expiry_date) || result.expiry_date, redeemCode: result.redeem_code } as GifticonResult;
-            else if (result.type === 'INVITATION') finalResult = { ...commonData, type: 'INVITATION', eventDate: normalizeDateTime(result.date_or_datetime) || result.date_or_datetime, eventLocation: result.place_name, eventType: normalizeInvitationEventType(result.event_type), mainName: result.host_names?.[0], hostNames: result.host_names, recommendedAmount: result.recommended_amount } as InvitationResult;
+            if (result.type === 'INVITATION') finalResult = { ...commonData, type: 'INVITATION', eventDate: normalizeDateTime(result.date_or_datetime) || result.date_or_datetime, eventLocation: result.place_name, eventType: normalizeInvitationEventType(result.event_type), mainName: result.host_names?.[0], hostNames: result.host_names, recommendedAmount: result.recommended_amount } as InvitationResult;
             else if (result.type === 'STORE_PAYMENT') finalResult = {
                 ...commonData,
                 type: 'STORE_PAYMENT',
@@ -1204,4 +1247,48 @@ export async function analyzeImageVisual(base64Image: string): Promise<ScannedDa
 
 export async function testConnection(): Promise<boolean> {
     try { if (!OPENAI_API_KEY) return false; const res = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${OPENAI_API_KEY} ` }, body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "user", content: "Hello" }], max_tokens: 5 }) }); return res.ok; } catch { return false; }
+}
+// ========================================
+// Audio Transcription (Whisper)
+// ========================================
+export async function transcribeAudio(uri: string): Promise<string> {
+    if (!OPENAI_API_KEY) throw new Error("OpenAI API Key is missing.");
+
+    console.log('[OpenAI] transcribeAudio called with uri:', uri);
+    const formData = new FormData();
+
+    // Append audio file
+    // Note: React Native's FormData expects { uri, name, type } for file uploads
+    formData.append('file', {
+        uri: uri,
+        name: 'voice.m4a', // Whisper supports m4a, mp3, etc.
+        type: 'audio/m4a'
+    } as any);
+
+    formData.append('model', 'whisper-1');
+    formData.append('language', 'ko'); // Korean Force for better results
+
+    try {
+        const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                // 'Content-Type': 'multipart/form-data', // ❌ Boundary Issue: Do NOT set this manually for FormData
+            },
+            body: formData
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            console.error('[OpenAI] Whisper API Error:', data);
+            throw new Error(data.error?.message || 'Whisper API Error');
+        }
+
+        console.log('[OpenAI] Whisper Transcription Success:', data.text);
+        return data.text || "";
+    } catch (error: any) {
+        console.error('[OpenAI] transcribeAudio failed:', error);
+        throw error;
+    }
 }

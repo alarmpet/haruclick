@@ -3,6 +3,7 @@ import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState, useRef } from 'react';
 import { View, Text, Linking, Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../services/supabase';
 import { Colors } from '../constants/Colors';
 import { ReciprocityEngine } from '../services/ReciprocityEngine';
@@ -134,14 +135,13 @@ export default function RootLayout() {
             clearTimeout(sessionTimeout);
             if (error) {
                 console.log('Session init error:', error);
-                // Invalid Refresh Token 에러 발생 시 강제 로그아웃
+
+                // ✅ Invalid Refresh Token 에러 발생 시 강력한(Robust) 로그아웃 처리
                 if (error.message && (
                     error.message.includes('Refresh Token') ||
                     error.message.includes('Invalid Refresh Token')
                 )) {
-                    console.log('Invalid token detected, signing out...');
-                    supabase.auth.signOut().catch(() => { });
-                    setSession(null);
+                    handleSessionError();
                 }
             }
             // 타임아웃이 이미 발생했더라도 세션이 있으면 업데이트 (결과적 일관성)
@@ -165,6 +165,36 @@ export default function RootLayout() {
             }
         });
 
+        // 🛡️ Helper: 세션 에러 시 로컬 데이터 강제 초기화
+        const handleSessionError = async () => {
+            console.warn('[Auth] Handling Invalid Refresh Token - Force Logout');
+
+            // 1. Supabase SignOut (Best Effort) - 네트워크 실패해도 진행
+            try {
+                await supabase.auth.signOut();
+            } catch (e) {
+                console.log('[Auth] Remote signOut failed, proceeding to local cleanup', e);
+            }
+
+            // 2. Local Storage 강제 정리 (Dynamic Key)
+            try {
+                const keys = await AsyncStorage.getAllKeys();
+                // Supabase 관련 키(sb-...) 모두 찾아서 제거
+                const supabaseKeys = keys.filter(k => k.startsWith('sb-') || k.includes('supabase'));
+
+                if (supabaseKeys.length > 0) {
+                    console.log('[Auth] Clearing stale keys:', supabaseKeys);
+                    await AsyncStorage.multiRemove(supabaseKeys);
+                }
+            } catch (e) {
+                console.error('[Auth] Storage cleanup failed:', e);
+            }
+
+            // 3. UI 및 라우팅 강제 리셋
+            setSession(null);
+            router.replace('/auth/login');
+        };
+
         const { data: { subscription: authListener } } = supabase.auth.onAuthStateChange(async (_event, session) => {
             setSession(session);
             if (session?.user) {
@@ -183,12 +213,12 @@ export default function RootLayout() {
         // Notification Listener
         const subscription = Notifications.addNotificationResponseReceivedListener(response => {
             const title = response.notification.request.content.title;
-            if (title && title.includes('보답')) {
-                setTimeout(() => {
-                    router.push('/gifticon/payback');
-                }, 500);
-            }
-        });
+                if (title && title.includes('보답')) {
+                    setTimeout(() => {
+                        router.push('/relationship-ledger');
+                    }, 500);
+                }
+            });
 
         return () => {
             linkingListener.remove();
@@ -318,19 +348,7 @@ export default function RootLayout() {
 
                     {/* Hide all other routes from tab bar */}
                     <Tabs.Screen
-                        name="gifticon/index"
-                        options={{
-                            href: null,
-                        }}
-                    />
-                    <Tabs.Screen
-                        name="gifticon/analyze"
-                        options={{
-                            href: null,
-                        }}
-                    />
-                    <Tabs.Screen
-                        name="gifticon/payback"
+                        name="relationship-ledger/index"
                         options={{
                             href: null,
                         }}

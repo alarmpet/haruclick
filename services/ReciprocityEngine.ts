@@ -1,39 +1,8 @@
-import { scheduleEventNotification, scheduleGifticonAlerts } from './notifications';
+import { scheduleEventNotification } from './notifications';
 import { supabase } from './supabase-modules/client';
 
 export class ReciprocityEngine {
 
-    // Check for gifticons expiring within 7 days
-    static async checkExpiringGifticons() {
-        console.log("[Reciprocity] Checking expiring gifticons...");
-        try {
-            const today = new Date();
-            // 7일 뒤 날짜
-            const nextWeek = new Date(today);
-            nextWeek.setDate(today.getDate() + 7);
-            const nextWeekStr = nextWeek.toISOString().split('T')[0];
-            const todayStr = today.toISOString().split('T')[0];
-
-            // 사용 가능하고 만료일이 오늘~7일 뒤인 것 조회
-            const { data, error } = await supabase
-                .from('gifticons')
-                .select('*')
-                .eq('status', 'available')
-                .gte('expiry_date', todayStr)
-                .lte('expiry_date', nextWeekStr);
-
-            if (error) throw error;
-
-            if (data && data.length > 0) {
-                console.log(`[Reciprocity] Found ${data.length} expiring gifticons.`);
-                await scheduleGifticonAlerts(data);
-            } else {
-                console.log("[Reciprocity] No expiring gifticons found.");
-            }
-        } catch (e) {
-            console.warn('[Reciprocity] Failed to check gifticons:', e);
-        }
-    }
 
     // Check if we need to repay someone for an upcoming event
     static async checkReciprocityNeeds() {
@@ -84,7 +53,6 @@ export class ReciprocityEngine {
     }
 
     static async runChecks() {
-        await this.checkExpiringGifticons();
         await this.checkReciprocityNeeds();
     }
 }

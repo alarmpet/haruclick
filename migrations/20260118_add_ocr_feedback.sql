@@ -31,7 +31,7 @@ CREATE INDEX IF NOT EXISTS idx_ocr_user_edits_created ON ocr_user_edits(created_
 CREATE TABLE IF NOT EXISTS approved_fewshots (
     fewshot_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     
-    doc_type TEXT NOT NULL, -- 'GIFTICON', 'STORE_PAYMENT', etc.
+    doc_type TEXT NOT NULL, -- 'INVITATION', 'OBITUARY', 'APPOINTMENT', 'STORE_PAYMENT', 'BANK_TRANSFER', 'BILL', 'SOCIAL', 'RECEIPT', 'TRANSFER', 'UNKNOWN'
     subtype TEXT,           -- 'CARD_APPROVAL', 'COUPON', etc.
     
     input_text TEXT NOT NULL,  -- The raw OCR text (cleaned)
@@ -61,7 +61,7 @@ CREATE POLICY "Users can insert their own edits" ON ocr_user_edits
 
 -- Allow admins (or service role) to read everything (simplified for now, adjust based on actual roles)
 CREATE POLICY "Service role full access edits" ON ocr_user_edits
-    FOR ALL TO service_role USING (true);
+    FOR ALL TO service_role USING (auth.role() = 'service_role');
 
 -- Approved Fewshots: Read-only for authenticated, write for service
 CREATE POLICY "Everyone can read approved fewshots" ON approved_fewshots
@@ -69,4 +69,4 @@ CREATE POLICY "Everyone can read approved fewshots" ON approved_fewshots
     USING (status = 'approved');
 
 CREATE POLICY "Service role full access fewshots" ON approved_fewshots
-    FOR ALL TO service_role USING (true);
+    FOR ALL TO service_role USING (auth.role() = 'service_role');

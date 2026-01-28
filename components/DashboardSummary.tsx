@@ -8,10 +8,15 @@ export function DashboardSummary() {
     const router = useRouter();
     const [stats, setStats] = useState({ totalGiven: 0, totalReceived: 0, diff: 0 });
 
+    const loadStats = useCallback(async () => {
+        const data = await fetchUserStats();
+        setStats(data);
+    }, []);
+
     useFocusEffect(
         useCallback(() => {
-            fetchUserStats().then(setStats);
-        }, [])
+            loadStats();
+        }, [loadStats])
     );
     return (
         <TouchableOpacity activeOpacity={0.9} onPress={() => router.push('/history')}>

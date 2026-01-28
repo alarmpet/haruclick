@@ -1,5 +1,5 @@
+import React, { memo, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
-import { useState, useEffect } from 'react';
 import { Colors } from '../constants/Colors';
 import { Poll, PollService } from '../services/PollService';
 import { VoteService, VoteResults } from '../services/VoteService';
@@ -12,7 +12,7 @@ interface PollCardProps {
     onDeleted?: () => void; // ✅ 삭제 후 콜백 추가
 }
 
-export function PollCard({ poll, onVoteSubmitted, onDeleted }: PollCardProps) {
+function PollCardBase({ poll, onVoteSubmitted, onDeleted }: PollCardProps) {
     const [voteResults, setVoteResults] = useState<VoteResults | null>(null);
     const [loading, setLoading] = useState(false);
     const [hasVoted, setHasVoted] = useState(false);
@@ -273,3 +273,5 @@ const styles = StyleSheet.create({
         borderRadius: 8,
     },
 });
+
+export const PollCard = memo(PollCardBase);

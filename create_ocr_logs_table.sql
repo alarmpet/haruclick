@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS ocr_pipeline_logs (
     
     -- 메타데이터
     text_length INT, -- 추출된 텍스트 길이
-    result_type TEXT, -- INVITATION, GIFTICON, STORE_PAYMENT 등
+    result_type TEXT, -- INVITATION, OBITUARY, APPOINTMENT, STORE_PAYMENT, BANK_TRANSFER, BILL, SOCIAL, RECEIPT, TRANSFER, UNKNOWN
     processing_time_ms INT, -- 처리 시간
     image_size_kb INT, -- 이미지 크기
     
@@ -37,10 +37,13 @@ CREATE INDEX IF NOT EXISTS idx_ocr_logs_created ON ocr_pipeline_logs(created_at 
 ALTER TABLE ocr_pipeline_logs ENABLE ROW LEVEL SECURITY;
 
 -- 인증된 사용자는 모든 로그 조회 가능 (관리자 페이지에서 접근)
-CREATE POLICY "Authenticated users can read ocr logs" 
-ON ocr_pipeline_logs FOR SELECT 
-TO authenticated 
-USING (true);
+CREATE POLICY "Users can read own ocr logs"
+ON ocr_pipeline_logs FOR SELECT TO authenticated
+USING (user_id = auth.uid());
+
+CREATE POLICY "Service role can read ocr logs"
+ON ocr_pipeline_logs FOR SELECT TO service_role
+USING (auth.role() = 'service_role');
 
 -- 인증된 사용자는 자신의 로그 INSERT 가능
 CREATE POLICY "Users can insert own ocr logs" 

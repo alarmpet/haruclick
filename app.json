@@ -20,7 +20,8 @@
       "bundleIdentifier": "com.haruclick.app",
       "infoPlist": {
         "NSCameraUsageDescription": "청첩장 스캔을 위해 카메라 권한이 필요합니다.",
-        "NSPhotoLibraryUsageDescription": "청첩장 사진을 불러오기 위해 앨범 권한이 필요합니다."
+        "NSPhotoLibraryUsageDescription": "청첩장 사진을 불러오기 위해 앨범 권한이 필요합니다.",
+        "NSMicrophoneUsageDescription": "음성 인식을 위해 마이크 접근 권한이 필요합니다."
       },
       "config": {
         "usesNonExemptEncryption": false
@@ -40,7 +41,8 @@
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.RECORD_AUDIO",
         "android.permission.NOTIFICATIONS"
-      ]
+      ],
+      "usesCleartextTraffic": true
     },
     "plugins": [
       "expo-router",
@@ -59,7 +61,8 @@
       ],
       "react-native-document-scanner-plugin",
       "@config-plugins/detox",
-      "react-native-fast-tflite"
+      "react-native-fast-tflite",
+      "./plugins/withAndroidManifestFix"
     ],
     "extra": {
       "router": {},

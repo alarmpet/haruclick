@@ -1,7 +1,7 @@
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { Colors } from '../constants/Colors';
 import { Card } from './Card';
-import { useState, useCallback } from 'react';
+import React, { memo, useCallback, useMemo, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { getUpcomingEvents, updateEvent, deleteEvent, deleteLedgerItem, deleteBankTransaction, EventRecord } from '../services/supabase';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,7 +14,7 @@ interface EventTimelineProps {
     onEventEdit?: (event: EventRecord) => void;
 }
 
-export function EventTimeline({ events: propEvents, title, onEventsChange, onEventPress, onEventEdit }: EventTimelineProps) {
+export const EventTimeline = memo(function EventTimeline({ events: propEvents, title, onEventsChange, onEventPress, onEventEdit }: EventTimelineProps) {
     const router = useRouter();
     const [stateEvents, setStateEvents] = useState<EventRecord[]>([]);
     const [loading, setLoading] = useState(propEvents === undefined);
@@ -22,22 +22,22 @@ export function EventTimeline({ events: propEvents, title, onEventsChange, onEve
     const isControlled = propEvents !== undefined;
     const events = isControlled ? propEvents : stateEvents;
 
-    const fetchEvents = async () => {
+    const fetchEvents = useCallback(async () => {
         if (isControlled) return;
         setLoading(true);
         const data = await getUpcomingEvents(2); // 최대 2개만
         setStateEvents(data);
         setLoading(false);
-    };
+    }, [isControlled]);
 
     useFocusEffect(
         useCallback(() => {
             fetchEvents();
-        }, [])
+        }, [fetchEvents])
     );
 
     // ✅ 송금 완료 상태 토글 (메모에 [송금완료] 태그 추가/제거)
-    const togglePayment = async (event: EventRecord) => {
+    const togglePayment = useCallback(async (event: EventRecord) => {
         const newStatus = !event.isPaid;
 
         // Optimistic UI Update (Only for local state)
@@ -62,10 +62,10 @@ export function EventTimeline({ events: propEvents, title, onEventsChange, onEve
             Alert.alert('오류', '상태 업데이트에 실패했습니다.');
             if (!isControlled) fetchEvents(); // Revert on error
         }
-    };
+    }, [fetchEvents, isControlled, onEventsChange]);
 
     // ✅ 일정 삭제
-    const handleDelete = (event: EventRecord) => {
+    const handleDelete = useCallback((event: EventRecord) => {
         Alert.alert(
             '일정 삭제',
             `"${event.name}" 일정을 삭제하시겠습니까?`,
@@ -97,28 +97,48 @@ export function EventTimeline({ events: propEvents, title, onEventsChange, onEve
                 }
             ]
         );
-    };
+    }, [isControlled, onEventsChange]);
 
-    // D-Day 계산
-    const getDDay = (dateStr: string) => {
+    // D-Day 계산 (하루 단위 캐시)
+    const todayKey = new Date().toISOString().split('T')[0];
+    const getDDay = useMemo(() => {
+        const cache = new Map<string, string>();
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        const eventDate = new Date(dateStr);
-        eventDate.setHours(0, 0, 0, 0);
+        const todayMs = today.getTime();
 
-        const diffTime = eventDate.getTime() - today.getTime();
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        return (dateStr: string) => {
+            const cacheKey = `${todayKey}:${dateStr}`;
+            const cached = cache.get(cacheKey);
+            if (cached) return cached;
 
-        if (diffDays === 0) return 'D-Day';
-        if (diffDays < 0) return `D+${Math.abs(diffDays)}`;
-        return `D-${diffDays}`;
-    };
+            const eventDate = new Date(dateStr);
+            eventDate.setHours(0, 0, 0, 0);
+            const diffTime = eventDate.getTime() - todayMs;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-    // 요일 계산
-    const getDayOfWeek = (dateStr: string) => {
+            let result = '';
+            if (diffDays === 0) result = 'D-Day';
+            else if (diffDays < 0) result = `D+${Math.abs(diffDays)}`;
+            else result = `D-${diffDays}`;
+
+            cache.set(cacheKey, result);
+            return result;
+        };
+    }, [todayKey]);
+
+    // 요일 계산 (캐시)
+    const getDayOfWeek = useMemo(() => {
+        const cache = new Map<string, string>();
         const days = ['일', '월', '화', '수', '목', '금', '토'];
-        return days[new Date(dateStr).getDay()];
-    };
+        return (dateStr: string) => {
+            const cached = cache.get(dateStr);
+            if (cached) return cached;
+            const day = days[new Date(dateStr).getDay()];
+            cache.set(dateStr, day);
+            return day;
+        };
+    }, []);
 
     // 시간 포맷팅 ("14:30:00" => "14:30")
     const formatTime = (timeStr?: string): string | null => {
@@ -214,7 +234,14 @@ export function EventTimeline({ events: propEvents, title, onEventsChange, onEve
                                         </View>
 
                                         <View style={styles.titleRow}>
-                                            <Text style={styles.eventTitle}>{event.name}</Text>
+                                            <Text style={styles.eventTitle}>
+                                                {event.name}
+                                                {event.location && (
+                                                    <Text style={{ color: Colors.subText, fontSize: 13, fontFamily: 'Pretendard-Regular' }}>
+                                                        {' / '}{event.location}
+                                                    </Text>
+                                                )}
+                                            </Text>
 
                                             {/* ✅ 송금 완료 체크박스 - 경조사(wedding, funeral, birthday)일 때만 표시 */}
                                             {!event.isReceived && ['wedding', 'funeral', 'birthday'].includes(event.type) && (
@@ -256,7 +283,7 @@ export function EventTimeline({ events: propEvents, title, onEventsChange, onEve
             </View>
         </View>
     );
-}
+});
 
 const styles = StyleSheet.create({
     container: {

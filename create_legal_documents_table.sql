@@ -14,10 +14,10 @@ CREATE TABLE IF NOT EXISTS legal_documents (
 -- Enable RLS
 ALTER TABLE legal_documents ENABLE ROW LEVEL SECURITY;
 
--- Public read access (no auth required)
-CREATE POLICY "Anyone can read legal documents"
-    ON legal_documents FOR SELECT
-    USING (true);
+-- Authenticated read access
+CREATE POLICY "Authenticated can read legal documents"
+    ON legal_documents FOR SELECT TO authenticated
+    USING (effective_date <= CURRENT_DATE);
 
 -- Insert initial content
 INSERT INTO legal_documents (id, title, content, effective_date) VALUES

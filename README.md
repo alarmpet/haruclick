@@ -3,11 +3,15 @@
 No description provided.
 
 ## 🚀 Features
-- **AI-Powered OCR**: Automatically extracts text from generic receipt images, gifticons, and wedding invitations.
+- **AI-Powered OCR**: Automatically extracts text from receipts, invitations, and common document images.
 - **Smart Classification**: Categorizes event types (Wedding, Funeral, Birthday) and financial transactions.
 - **Calendar Integration**: Syncs extracted events directly to your device calendar.
 - **Dark Mode Support**: Fully supported with dynamic theming.
 - **Accessibility**: Optimized for screen readers.
+
+## 🎙 Voice Pipeline Docs
+- **Master Plan**: `VOICE_PIPELINE_STABILITY_PLAN.md`
+- **Archive**: `docs/archive/voice/`
 
 ## 📂 Project Structure
 ```
@@ -24,11 +28,9 @@ No description provided.
 │   │   └── index.tsx
 │   ├── community
 │   │   └── index.tsx
-│   ├── gifticon
-│   │   ├── analyze.tsx
-│   │   ├── index.tsx
-│   │   └── payback.tsx
 │   ├── history
+│   │   └── index.tsx
+│   ├── relationship-ledger
 │   │   └── index.tsx
 │   ├── scan
 │   │   ├── index.tsx
@@ -60,7 +62,6 @@ No description provided.
 ├── components
 │   ├── scan
 │   │   ├── EditableRow.tsx
-│   │   ├── GifticonEditor.tsx
 │   │   ├── index.ts
 │   │   └── TransactionEditor.tsx
 │   ├── AddEventModal.tsx
@@ -77,7 +78,6 @@ No description provided.
 │   ├── RecommendationTable.tsx
 │   ├── ScannerFAB.tsx
 │   ├── ScanSettingsModal.tsx
-│   ├── SenderSelectModal.tsx
 │   ├── SpinnerTimePicker.tsx
 │   ├── TaskListModal.tsx
 │   ├── TermsAgreementModal.tsx
@@ -102,7 +102,6 @@ No description provided.
 │   ├── DataStore.ts
 │   ├── DeviceCalendarService.ts
 │   ├── errorHandler.ts
-│   ├── GifticonAnalysis.ts
 │   ├── GoogleVisionService.ts
 │   ├── imageHash.ts
 │   ├── LunarCalendarService.ts

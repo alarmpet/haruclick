@@ -4,7 +4,7 @@ import { DrawerActions } from '@react-navigation/native';
 import { Calendar, CalendarList, DateData, LocaleConfig } from 'react-native-calendars';
 import { Colors } from '../../constants/Colors';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { EventDetailModal } from '../../components/EventDetailModal';
 import { DayTimelineModal } from '../../components/DayTimelineModal';
@@ -57,7 +57,6 @@ export default function CalendarScreen() {
     // DB Data States
     const [events, setEvents] = useState<EventRecord[]>([]);
     const [externalEvents, setExternalEvents] = useState<DeviceEvent[]>([]); // 기기 일정
-    const [markedDates, setMarkedDates] = useState<any>({});
     const [loading, setLoading] = useState(true);
 
     // 카테고리 필터 상태
@@ -67,6 +66,92 @@ export default function CalendarScreen() {
         schedule: true,
         expense: true, // 가계부 필터 기본 켜짐
     });
+    const markedDates = useMemo(() => {
+        const newMarkedDates: any = {};
+
+        // 1. 내부 일정 처리
+        events.forEach(event => {
+            const category = event.category || 'ceremony';
+            if (!filters[category]) return;
+
+            let color = CATEGORY_COLORS[category];
+
+            // 1. 수입(받은 돈)은 무조건 파란색
+            if (event.isReceived) {
+                color = CATEGORY_COLORS.income;
+            }
+            // 2. 지출(영수증, 송금 보냄)은 빨간색
+            else if (event.type === 'receipt' || (event.type === 'transfer' && !event.isReceived)) {
+                color = CATEGORY_COLORS.expense;
+            }
+            // 3. 나머지는 기존 카테고리/타입 색상
+            else {
+                color = CATEGORY_COLORS[event.type] || CATEGORY_COLORS[category] || '#999';
+            }
+
+            if (!newMarkedDates[event.date]) {
+                newMarkedDates[event.date] = { events: [] };
+            }
+            newMarkedDates[event.date].events.push({
+                ...event,
+                color,
+            });
+        });
+
+        // 2. 외부 일정 처리 (schedule 필터가 켜진 경우에만 표시하거나, 항상 표시?)
+        // 일단 'schedule' 필터에 종속시킨다.
+        if (filters.schedule) {
+            // [Optimization] O(N) Lookup Table generation
+            const internalSignatures = new Set<string>();
+            events.forEach(int => {
+                const name = (int.name || '').normalize('NFC').replace(/\s+/g, '');
+                internalSignatures.add(`${name}|${int.date}`);
+            });
+
+            const visibleExternal = externalEvents.filter(ext => {
+                const extName = (ext.title || '').normalize('NFC').replace(/\s+/g, '');
+                const extDateStr = ext.startDate.split('T')[0];
+                const extDate = new Date(extDateStr);
+
+                // Check Exact Match
+                if (internalSignatures.has(`${extName}|${extDateStr}`)) return false;
+
+                // Check +/- 1 Day (Fuzzy Match)
+                // Prev Day
+                const prevDate = new Date(extDate);
+                prevDate.setDate(prevDate.getDate() - 1);
+                const prevDateStr = prevDate.toISOString().split('T')[0];
+                if (internalSignatures.has(`${extName}|${prevDateStr}`)) return false;
+
+                // Next Day
+                const nextDate = new Date(extDate);
+                nextDate.setDate(nextDate.getDate() + 1);
+                const nextDateStr = nextDate.toISOString().split('T')[0];
+                if (internalSignatures.has(`${extName}|${nextDateStr}`)) return false;
+
+                return true;
+            });
+
+            visibleExternal.forEach(event => {
+                const dateStr = event.startDate.split('T')[0];
+                if (!newMarkedDates[dateStr]) {
+                    newMarkedDates[dateStr] = { events: [] };
+                }
+                newMarkedDates[dateStr].events.push({
+                    id: event.id,
+                    name: event.title,
+                    type: 'external',
+                    category: 'schedule', // 분류상 일정으로 취급
+                    date: dateStr,
+                    color: event.color || '#999', // 캘린더 색상 사용
+                    isExternal: true // 구분용
+                });
+            });
+        }
+
+        return newMarkedDates;
+    }, [events, externalEvents, filters]);
+
 
     // FAB 확장 상태
     const [fabExpanded, setFabExpanded] = useState(false);
@@ -153,7 +238,7 @@ export default function CalendarScreen() {
     }, [initialDateParam, events, externalEvents]);
 
     // 데이터 로드 함수
-    const fetchEvents = async () => {
+    const fetchEvents = useCallback(async () => {
         console.log('[Calendar] fetchEvents started');
         setLoading(true);
 
@@ -194,9 +279,6 @@ export default function CalendarScreen() {
             }
             setExternalEvents(extData);
 
-            // 필터 적용하여 마킹
-            updateMarkedDates(data, extData, filters);
-
             // 현재 선택된 날짜 데이터 갱신
             if (selectedDate) {
                 const daily = data.filter(e => e.date === selectedDate);
@@ -209,100 +291,13 @@ export default function CalendarScreen() {
             console.log('[Calendar] fetchEvents finally block');
             setLoading(false);
         }
-    };
+    }, [selectedDate]);
 
     useFocusEffect(
         useCallback(() => {
             fetchEvents();
-        }, [])
+        }, [fetchEvents])
     );
-
-    // 필터링된 markedDates 업데이트
-    const updateMarkedDates = (internalData: EventRecord[], externalData: DeviceEvent[], activeFilters: typeof filters) => {
-        const newMarkedDates: any = {};
-
-        // 1. 내부 일정 처리
-        internalData.forEach(event => {
-            const category = event.category || 'ceremony';
-            if (!activeFilters[category]) return;
-
-            let color = CATEGORY_COLORS[category];
-
-            // 1. 수입(받은 돈)은 무조건 파란색
-            if (event.isReceived) {
-                color = CATEGORY_COLORS.income;
-            }
-            // 2. 지출(영수증, 송금 보냄)은 빨간색
-            else if (event.type === 'receipt' || (event.type === 'transfer' && !event.isReceived)) {
-                color = CATEGORY_COLORS.expense;
-            }
-            // 3. 나머지는 기존 카테고리/타입 색상
-            else {
-                color = CATEGORY_COLORS[event.type] || CATEGORY_COLORS[category] || '#999';
-            }
-
-            if (!newMarkedDates[event.date]) {
-                newMarkedDates[event.date] = { events: [] };
-            }
-            newMarkedDates[event.date].events.push({
-                ...event,
-                color,
-            });
-        });
-
-        // 2. 외부 일정 처리 (schedule 필터가 켜진 경우에만 표시하거나, 항상 표시?)
-        // 일단 'schedule' 필터에 종속시킨다.
-        if (activeFilters.schedule) {
-            // [Optimization] O(N) Lookup Table generation
-            const internalSignatures = new Set<string>();
-            internalData.forEach(int => {
-                const name = (int.name || '').normalize('NFC').replace(/\s+/g, '');
-                internalSignatures.add(`${name}|${int.date}`);
-            });
-
-            const visibleExternal = externalData.filter(ext => {
-                const extName = (ext.title || '').normalize('NFC').replace(/\s+/g, '');
-                const extDateStr = ext.startDate.split('T')[0];
-                const extDate = new Date(extDateStr);
-
-                // Check Exact Match
-                if (internalSignatures.has(`${extName}|${extDateStr}`)) return false;
-
-                // Check +/- 1 Day (Fuzzy Match)
-                // Prev Day
-                const prevDate = new Date(extDate);
-                prevDate.setDate(prevDate.getDate() - 1);
-                const prevDateStr = prevDate.toISOString().split('T')[0];
-                if (internalSignatures.has(`${extName}|${prevDateStr}`)) return false;
-
-                // Next Day
-                const nextDate = new Date(extDate);
-                nextDate.setDate(nextDate.getDate() + 1);
-                const nextDateStr = nextDate.toISOString().split('T')[0];
-                if (internalSignatures.has(`${extName}|${nextDateStr}`)) return false;
-
-                return true;
-            });
-
-            visibleExternal.forEach(event => {
-                const dateStr = event.startDate.split('T')[0];
-                if (!newMarkedDates[dateStr]) {
-                    newMarkedDates[dateStr] = { events: [] };
-                }
-                newMarkedDates[dateStr].events.push({
-                    id: event.id,
-                    name: event.title,
-                    type: 'external',
-                    category: 'schedule', // 분류상 일정으로 취급
-                    date: dateStr,
-                    color: event.color || '#999', // 캘린더 색상 사용
-                    isExternal: true // 구분용
-                });
-            });
-        }
-
-        setMarkedDates(newMarkedDates);
-    };
 
     // 내부/외부 일정 합치기
     const getMergedEvents = useCallback(() => {
@@ -371,7 +366,6 @@ export default function CalendarScreen() {
     const toggleFilter = (category: EventCategory) => {
         const newFilters = { ...filters, [category]: !filters[category] };
         setFilters(newFilters);
-        updateMarkedDates(events, externalEvents, newFilters);
     };
 
     // FAB 토글

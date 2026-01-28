@@ -60,7 +60,7 @@ export default function WelcomeScreen() {
 
     const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
 
-    const renderSlide = ({ item }: { item: typeof ONBOARDING_SLIDES[0] }) => (
+    const renderSlide = useCallback(({ item }: { item: typeof ONBOARDING_SLIDES[number] }) => (
         <View style={styles.slide}>
             <View style={styles.iconContainer}>
                 <View style={styles.iconGlow} />
@@ -69,7 +69,9 @@ export default function WelcomeScreen() {
             <Text style={styles.slideTitle}>{item.title}</Text>
             <Text style={styles.slideSubtitle}>{item.subtitle}</Text>
         </View>
-    );
+    ), []);
+
+    const keyExtractor = useCallback((item: typeof ONBOARDING_SLIDES[number]) => item.id, []);
 
     const renderPagination = () => (
         <View style={styles.pagination}>
@@ -111,7 +113,7 @@ export default function WelcomeScreen() {
                     ref={flatListRef}
                     data={ONBOARDING_SLIDES}
                     renderItem={renderSlide}
-                    keyExtractor={(item) => item.id}
+                    keyExtractor={keyExtractor}
                     horizontal
                     pagingEnabled
                     showsHorizontalScrollIndicator={false}

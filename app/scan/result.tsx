@@ -2,7 +2,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIn
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { Colors } from '../../constants/Colors';
 import { Ionicons } from '@expo/vector-icons';
-import { ScannedData, InvitationResult, ReceiptResult, TransferResult, BillResult, SocialResult, BankTransactionResult, StorePaymentResult, GifticonResult } from '../../services/ai/OpenAIService';
+import { ScannedData, InvitationResult, ReceiptResult, TransferResult, BillResult, SocialResult, BankTransactionResult, StorePaymentResult } from '../../services/ai/OpenAIService';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { saveUnifiedEvent } from '../../services/supabase';
 import { logOcrCorrections } from '../../services/ocrCorrections';
@@ -142,8 +142,10 @@ export default function SmartScanResultScreen() {
 
     // ✅ OCR 피드백 모달 상태
     const [ocrFeedbackVisible, setOcrFeedbackVisible] = useState(false);
+    const [voiceFeedbackVisible, setVoiceFeedbackVisible] = useState(false);
 
     // ✅ 성공 모달 상태
+    const [voiceRawText, setVoiceRawText] = useState('');
     const [successModalVisible, setSuccessModalVisible] = useState(false);
     const [successMessage, setSuccessMessage] = useState('');
 
@@ -161,6 +163,7 @@ export default function SmartScanResultScreen() {
             const loadData = async () => {
                 const session = DataStore.getScanResult();
                 const sessionUri = session.imageUri;
+                setVoiceRawText(session.ocrRawText || '');
                 const paramsUri = params.imageUri as string;
 
                 const uri = sessionUri || paramsUri;
@@ -209,11 +212,13 @@ export default function SmartScanResultScreen() {
             };
 
             loadData();
-        }, [params.imageUri])
+        }, [params.imageUri, params.scannedData])
     );
 
     // ✅ 편집 중인 항목 또는 첫 번째 항목 참조
     const data = editingIndex !== null ? dataList[editingIndex] : (dataList[0] || null);
+
+    const isVoiceSession = (imageUri || (params.imageUri as string)) === 'voice-input';
 
     // ✅ 개별 항목 편집 모드 진입
     const openEditMode = (index: number) => {
@@ -310,18 +315,10 @@ export default function SmartScanResultScreen() {
             const newList = [...prev];
             const target = newList[datePickerTargetIndex];
 
-            // GIFTICON checks
-            if (target.type === 'GIFTICON') {
-                newList[datePickerTargetIndex] = {
-                    ...target,
-                    expiryDate: dateStr
-                } as ScannedData;
-            } else {
-                newList[datePickerTargetIndex] = {
-                    ...target,
-                    date: dateStr
-                } as ScannedData;
-            }
+            newList[datePickerTargetIndex] = {
+                ...target,
+                date: dateStr
+            } as ScannedData;
             return newList;
         });
 
@@ -513,7 +510,7 @@ export default function SmartScanResultScreen() {
 
             // ✅ 날짜 없는 항목 체크
             // ✅ 날짜 없는 항목 체크
-            const itemsWithoutDate = selectedItems.filter(item => !isValidDate((item as any).date || (item as any).eventDate || (item as any).expiryDate));
+            const itemsWithoutDate = selectedItems.filter(item => !isValidDate((item as any).date || (item as any).eventDate));
             if (itemsWithoutDate.length > 0) {
                 Alert.alert(
                     '날짜 필요',
@@ -692,7 +689,7 @@ export default function SmartScanResultScreen() {
                 {dataList.map((item, index) => {
                     const isSelected = selectedIndices.has(index);
                     const isDeposit = item.type === 'BANK_TRANSFER' && (item as BankTransactionResult).transactionType === 'deposit';
-                    const dateValue = (item as any).date || (item as any).eventDate || (item as any).expiryDate;
+                    const dateValue = (item as any).date || (item as any).eventDate;
                     const hasValidDate = isValidDate(dateValue);
 
                     return (
@@ -734,26 +731,22 @@ export default function SmartScanResultScreen() {
                                         {item.type === 'BANK_TRANSFER'
                                             ? (isDeposit ? '🔵 입금' : '🔴 출금')
                                             : item.type === 'STORE_PAYMENT' ? '🛒 결제'
-                                                : item.type === 'GIFTICON' ? '🎁 기프티콘'
-                                                    : item.type === 'APPOINTMENT' ? '📅 일정'
-                                                        : item.type}
+                                                : item.type === 'APPOINTMENT' ? '📅 일정'
+                                                    : item.type}
                                     </Text>
                                     <Text style={[
                                         styles.transactionAmount,
-                                        { color: isDeposit ? '#1565C0' : item.type === 'GIFTICON' ? Colors.text : item.type === 'APPOINTMENT' ? Colors.subText : '#C62828' }
+                                        { color: isDeposit ? '#1565C0' : item.type === 'APPOINTMENT' ? Colors.subText : '#C62828' }
                                     ]}>
-                                        {item.type === 'GIFTICON'
-                                            ? ((item as any).estimatedPrice ? `${((item as any).estimatedPrice).toLocaleString()}원` : '금액 미입력')
-                                            : item.type === 'APPOINTMENT' ? ((item as any).location || '')
-                                                : (isDeposit ? '+' : '-') + ((item as any).amount || 0).toLocaleString() + '원'}
+                                        {item.type === 'APPOINTMENT'
+                                            ? ((item as any).location || '')
+                                            : (isDeposit ? '+' : '-') + ((item as any).amount || 0).toLocaleString() + '원'}
                                     </Text>
                                 </View>
                                 <Text style={[styles.transactionTarget, { color: colors.text }]}>
-                                    {item.type === 'GIFTICON'
-                                        ? ((item as any).productName || '상품명 없음')
-                                        : item.type === 'APPOINTMENT'
-                                            ? ((item as any).title || '일정')
-                                            : ((item as any).targetName || (item as any).merchant || '알 수 없음')}
+                                    {item.type === 'APPOINTMENT'
+                                        ? ((item as any).title || '일정')
+                                        : ((item as any).targetName || (item as any).merchant || '알 수 없음')}
                                 </Text>
                                 <View style={styles.editHintRow}>
                                     {hasValidDate ? (
@@ -779,7 +772,7 @@ export default function SmartScanResultScreen() {
                 {/* ✅ OCR 피드백 링크 */}
                 <TouchableOpacity
                     style={styles.feedbackLink}
-                    onPress={() => setOcrFeedbackVisible(true)}
+                    onPress={() => isVoiceSession ? setVoiceFeedbackVisible(true) : setOcrFeedbackVisible(true)}
                 >
                     <Ionicons name="chatbubble-ellipses-outline" size={16} color={Colors.subText} />
                     <Text style={styles.feedbackLinkText}>AI 분류가 잘못됐나요? 의견 보내기</Text>
@@ -973,59 +966,6 @@ export default function SmartScanResultScreen() {
                     </View>
                 )}
 
-                {data.type === 'GIFTICON' && (
-                    <View style={styles.card}>
-                        <View style={styles.headerRow}>
-                            <Ionicons name="gift-outline" size={24} color={Colors.navy} />
-                            <Text style={styles.cardTitle}>기프티콘 정보 수정</Text>
-                        </View>
-                        <View style={styles.divider} />
-
-                        <EditableRow
-                            label="상품명"
-                            value={(data as any).productName || ''}
-                            onChangeText={(text) => updateEditingItem('productName', text)}
-                        />
-                        <EditableRow
-                            label="브랜드"
-                            value={(data as any).brandName || ''}
-                            onChangeText={(text) => updateEditingItem('brandName', text)}
-                        />
-                        <EditableRow
-                            label="보낸 사람"
-                            value={(data as any).senderName || ''}
-                            onChangeText={(text) => updateEditingItem('senderName', text)}
-                        />
-
-                        {/* 날짜 선택 (직접 구현) */}
-                        <View style={styles.row}>
-                            <Text style={[styles.label, { marginTop: 12 }]}>유효기간</Text>
-                            <TouchableOpacity
-                                style={[styles.input, { justifyContent: 'center' }]}
-                                onPress={() => openDatePicker(editingIndex!)}
-                            >
-                                <Text style={{ fontFamily: 'Pretendard-Bold', fontSize: 16, color: Colors.text }}>
-                                    {(data as any).expiryDate || 'YYYY-MM-DD'}
-                                </Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        <EditableRow
-                            label="바코드 번호"
-                            value={(data as any).barcodeNumber || ''}
-                            onChangeText={(text) => updateEditingItem('barcodeNumber', text)}
-                            keyboardType="numeric"
-                        />
-                        <EditableRow
-                            label="예상 금액"
-                            value={String((data as any).estimatedPrice || 0)}
-                            keyboardType="numeric"
-                            onChangeText={(text) => updateEditingItem('estimatedPrice', parseInt(text.replace(/[^0-9]/g, '') || '0', 10))}
-                            isCurrency
-                        />
-                    </View>
-                )}
-
                 {/* 완료 버튼 */}
                 <TouchableOpacity style={styles.editModeCompleteButton} onPress={closeEditMode}>
                     <Text style={styles.editModeCompleteText}>수정 완료</Text>
@@ -1057,6 +997,9 @@ export default function SmartScanResultScreen() {
         switch (data.type) {
             case 'INVITATION':
                 const invite = data as InvitationResult;
+                const eventType = invite.eventType || 'wedding';
+                const showDonation = eventType === 'wedding' || eventType === 'funeral';
+                const donationTitle = eventType === 'funeral' ? '장례식 추천 금액 테이블' : '결혼식 추천 금액 테이블';
                 return (
                     <>
                         <View style={styles.card}>
@@ -1066,7 +1009,7 @@ export default function SmartScanResultScreen() {
                             </View>
                             <View style={styles.divider} />
 
-                            <InfoRow label="행사 종류" value={invite.eventType || '알 수 없음'} />
+                            <InfoRow label="행사 종류" value={eventType || '알 수 없음'} />
                             <InfoRow label="일시" value={formatDisplayDateTime(invite.eventDate) || '날짜 없음'} />
                             <InfoRow label="장소" value={invite.eventLocation || '장소 정보 없음'} />
                             <InfoRow label="주인공" value={invite.mainName || '-'} />
@@ -1133,119 +1076,76 @@ export default function SmartScanResultScreen() {
                             </View>
                         </View>
 
-                        {/* AI Insight Card - 새 추천 엔진 적용 */}
-                        <View style={[styles.card, styles.recommendationCard]}>
-                            <View style={styles.headerRow}>
-                                <Ionicons name="sparkles" size={20} color={Colors.white} />
-                                <Text style={[styles.cardTitle, { color: Colors.white }]}>AI 스마트 추천</Text>
-                            </View>
-                            <Text style={styles.recommendationAmount}>
-                                {(recommendation?.recommendedAmount || 100000).toLocaleString()}원
-                            </Text>
-                            {recommendation?.venueMealCost && (
-                                <Text style={styles.venueInfo}>
-                                    📍 {recommendation.venueName || '장소'} 식대: 약 {(recommendation.venueMealCost / 10000).toFixed(0)}만원
-                                </Text>
-                            )}
-                            <Text style={styles.recommendationReason}>
-                                {recommendation?.reason || (selectedRelation
-                                    ? `${selectedRelation} 관계 기준 추천 금액입니다.`
-                                    : invite.recommendationReason || "관계를 선택해주세요.")}
-                            </Text>
-                            {recommendation && (
-                                <Text style={styles.rangeInfo}>
-                                    적정 범위: {(recommendation.minAmount / 10000).toFixed(0)}만원 ~ {(recommendation.maxAmount / 10000).toFixed(0)}만원
-                                </Text>
-                            )}
-                        </View>
-
-                        {/* ✅ 축의금 추천 테이블 */}
-                        <View style={styles.tableCard}>
-                            <View style={styles.headerRow}>
-                                <Ionicons name="list-outline" size={20} color={Colors.navy} />
-                                <Text style={styles.cardTitle}>결혼식 추천 금액 테이블</Text>
-                            </View>
-                            <RecommendationTable
-                                eventType={invite.eventType || 'wedding'}
-                                selectedRelation={selectedRelation}
-                                recommendation={recommendation}
-                                venueName={recommendation?.venueName || undefined}
-                                isVenueInDB={recommendation?.venueType === 'hotel' || recommendation?.venueType === 'convention'}
-                            />
-                        </View>
-
-                        {/* ✅ 간편 송금 섹션 */}
-                        <Text style={styles.sectionTitle}>💳 간편 송금</Text>
-                        <View style={styles.payRow}>
-                            {PAY_APPS.map((app) => (
-                                <TouchableOpacity
-                                    key={app.key}
-                                    style={[styles.payButton, { backgroundColor: app.color }]}
-                                    onPress={() => handlePayment(app)}
-                                >
-                                    <Text style={[styles.payButtonText, { color: app.textColor || '#FFFFFF' }]}>
-                                        {app.icon} {app.label}
+                        {showDonation ? (
+                            <>
+                                {/* AI Insight Card - 새 추천 엔진 적용 */}
+                                <View style={[styles.card, styles.recommendationCard]}>
+                                    <View style={styles.headerRow}>
+                                        <Ionicons name="sparkles" size={20} color={Colors.white} />
+                                        <Text style={[styles.cardTitle, { color: Colors.white }]}>AI 스마트 추천</Text>
+                                    </View>
+                                    <Text style={styles.recommendationAmount}>
+                                        {(recommendation?.recommendedAmount || 100000).toLocaleString()}원
                                     </Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                        <Text style={styles.helperText}>* 추천된 금액({(recommendation?.recommendedAmount || 0).toLocaleString()}원)이 송금 앱에 자동 입력됩니다.</Text>
+                                    {recommendation?.venueMealCost && (
+                                        <Text style={styles.venueInfo}>
+                                            📍 {recommendation.venueName || '장소'} 식대: 약 {(recommendation.venueMealCost / 10000).toFixed(0)}만원
+                                        </Text>
+                                    )}
+                                    <Text style={styles.recommendationReason}>
+                                        {recommendation?.reason || (selectedRelation
+                                            ? `${selectedRelation} 관계 기준 추천 금액입니다.`
+                                            : invite.recommendationReason || "관계를 선택해주세요.")}
+                                    </Text>
+                                    {recommendation && (
+                                        <Text style={styles.rangeInfo}>
+                                            적정 범위: {(recommendation.minAmount / 10000).toFixed(0)}만원 ~ {(recommendation.maxAmount / 10000).toFixed(0)}만원
+                                        </Text>
+                                    )}
+                                </View>
+
+                                {/* ✅ 축의금 추천 테이블 */}
+                                <View style={styles.tableCard}>
+                                    <View style={styles.headerRow}>
+                                        <Ionicons name="list-outline" size={20} color={Colors.navy} />
+                                        <Text style={styles.cardTitle}>{donationTitle}</Text>
+                                    </View>
+                                    <RecommendationTable
+                                        eventType={eventType}
+                                        selectedRelation={selectedRelation}
+                                        recommendation={recommendation}
+                                        venueName={recommendation?.venueName || undefined}
+                                        isVenueInDB={recommendation?.venueType === 'hotel' || recommendation?.venueType === 'convention'}
+                                    />
+                                </View>
+
+                                {/* ✅ 간편 송금 섹션 */}
+                                <Text style={styles.sectionTitle}>💳 간편 송금</Text>
+                                <View style={styles.payRow}>
+                                    {PAY_APPS.map((app) => (
+                                        <TouchableOpacity
+                                            key={app.key}
+                                            style={[styles.payButton, { backgroundColor: app.color }]}
+                                            onPress={() => handlePayment(app)}
+                                        >
+                                            <Text style={[styles.payButtonText, { color: app.textColor || '#FFFFFF' }]}>
+                                                {app.icon} {app.label}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                                <Text style={styles.helperText}>* 추천된 금액({(recommendation?.recommendedAmount || 0).toLocaleString()}원)이 송금 앱에 자동 입력됩니다.</Text>
+                            </>
+                        ) : (
+                            <View style={styles.card}>
+                                <View style={styles.headerRow}>
+                                    <Ionicons name="information-circle-outline" size={20} color={Colors.navy} />
+                                    <Text style={styles.cardTitle}>안내</Text>
+                                </View>
+                                <Text style={styles.helperText}>생일 일정은 축의금/부조금 추천 및 송금 기능을 제공하지 않습니다.</Text>
+                            </View>
+                        )}
                     </>
-                );
-
-            case 'GIFTICON':
-                const gifticon = data as GifticonResult;
-                return (
-                    <View style={styles.card}>
-                        <View style={styles.headerRow}>
-                            <Ionicons name="gift-outline" size={24} color={Colors.navy} />
-                            <Text style={styles.cardTitle}>기프티콘 정보 (수정 가능)</Text>
-                        </View>
-                        <View style={styles.divider} />
-
-                        <EditableRow
-                            label="상품명"
-                            value={gifticon.productName || ''}
-                            onChangeText={(text) => handleUpdateData('productName', text)}
-                        />
-                        <EditableRow
-                            label="브랜드"
-                            value={gifticon.brandName || ''}
-                            onChangeText={(text) => handleUpdateData('brandName', text)}
-                        />
-                        <EditableRow
-                            label="보낸 사람"
-                            value={gifticon.senderName || ''}
-                            onChangeText={(text) => handleUpdateData('senderName', text)}
-                        />
-
-                        {/* 날짜 선택 (직접 구현) */}
-                        <View style={styles.row}>
-                            <Text style={[styles.label, { marginTop: 12 }]}>유효기간</Text>
-                            <TouchableOpacity
-                                style={[styles.input, { justifyContent: 'center' }]}
-                                onPress={() => openDatePicker(editingIndex !== null ? editingIndex : 0)}
-                            >
-                                <Text style={{ fontFamily: 'Pretendard-Bold', fontSize: 16, color: Colors.text }}>
-                                    {gifticon.expiryDate || 'YYYY-MM-DD'}
-                                </Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        <EditableRow
-                            label="바코드 번호"
-                            value={gifticon.barcodeNumber || ''}
-                            onChangeText={(text) => handleUpdateData('barcodeNumber', text)}
-                            keyboardType="numeric"
-                        />
-                        <EditableRow
-                            label="예상 금액"
-                            value={String(gifticon.estimatedPrice || 0)}
-                            keyboardType="numeric"
-                            onChangeText={(text) => handleUpdateData('estimatedPrice', parseInt(text.replace(/[^0-9]/g, '') || '0', 10))}
-                            isCurrency
-                        />
-                    </View>
                 );
 
             case 'RECEIPT':
@@ -1984,6 +1884,17 @@ export default function SmartScanResultScreen() {
                     rawText: dataList.map(d => JSON.stringify(d)).join('\n---\n'),
                     classifiedType: dataList.map(d => d.type).join(', '),
                     classifiedData: dataList
+                }}
+            />
+
+            <FeedbackModal
+                visible={voiceFeedbackVisible}
+                onClose={() => setVoiceFeedbackVisible(false)}
+                voiceContext={{
+                    rawText: voiceRawText || dataList.map(d => JSON.stringify(d)).join('\n---\n'),
+                    classifiedType: dataList.map(d => d.type).join(', '),
+                    classifiedData: dataList,
+                    source: 'voice'
                 }}
             />
 

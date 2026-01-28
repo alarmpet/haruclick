@@ -1,153 +1,201 @@
-import { supabase, getCached, setCache, invalidateCache } from './client';
+﻿import { supabase, getCached, setCache, withInflight, invalidateUserScopedCache } from './client';
 import { showError } from '../errorHandler';
 import { EventRecord, EventCategory } from './types';
+
+function extractTime(dateTime?: string): string | undefined {
+    if (!dateTime) return undefined;
+    const match = dateTime.match(/(\d{1,2}:\d{2})/);
+    if (!match) return undefined;
+
+    const timePart = match[1];
+    const hasZone = /[zZ]|[+-]\d{2}:\d{2}$/.test(dateTime);
+    const isDefaultMidnightUtc = hasZone && /T00:00(:00(\.\d+)?)?/.test(dateTime);
+    if (isDefaultMidnightUtc) return undefined;
+
+    if (hasZone) {
+        const normalized = dateTime.replace(' ', 'T');
+        const parsed = new Date(normalized);
+        if (!isNaN(parsed.getTime())) {
+            const hours = String(parsed.getHours()).padStart(2, '0');
+            const minutes = String(parsed.getMinutes()).padStart(2, '0');
+            if (hours === '00' && minutes === '00') return undefined;
+            return `${hours}:${minutes}`;
+        }
+    }
+
+    return timePart === '00:00' ? undefined : timePart;
+}
 
 export async function updateEvent(id: string, updates: any) {
     try {
         const { error } = await supabase.from('events').update(updates).eq('id', id);
         if (error) throw error;
-        invalidateCache(); // ✅ 캐시 무효화
+        const { data: { user } } = await supabase.auth.getUser();
+        invalidateUserScopedCache(['upcoming_', 'stats_'], user?.id); // ??罹먯떆 臾댄슚??
         return { error: null };
     } catch (e: any) {
         console.error('Error updating event:', e);
-        showError(e.message ?? '이벤트 업데이트 실패');
+        showError(e.message ?? '?대깽???낅뜲?댄듃 ?ㅽ뙣');
         return { error: e };
     }
 }
 
 export async function getUpcomingEvents(limit = 2): Promise<EventRecord[]> {
-    const cacheKey = `upcoming_${limit}`;
-    const cached = getCached<EventRecord[]>(cacheKey);
-    if (cached) {
-        console.log('[Cache HIT] getUpcomingEvents');
-        return cached;
-    }
-
     try {
-        // KST 기준 오늘 날짜 계산 (UTC+9)
-        const today = new Date(new Date().getTime() + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
-
         // 0. Auth Check
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) {
             return [];
         }
 
-        // 다가오는 일정 (오늘 제외, 내일부터)
-        const { data, error } = await supabase
-            .from('events')
-            .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location')
-            .gt('event_date', today)
-            .order('event_date', { ascending: true })
-            .limit(limit);
+        const cacheKey = `upcoming_${user.id}_${limit}`;
+        const cached = getCached<EventRecord[]>(cacheKey);
+        if (cached) {
+            console.log('[Cache HIT] getUpcomingEvents');
+            return cached;
+        }
 
-        if (error) throw error;
+        return await withInflight(cacheKey, async () => {
+            // KST ?? ?? ?? ?? (UTC+9)
+            const today = new Date(new Date().getTime() + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-        const result = data.map((item: any) => ({
+            // ???? ?? (?? ??, ????)
+            const { data, error } = await supabase
+                .from('events')
+                .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location')
+                .eq('user_id', user.id)
+                .gt('event_date', today)
+                .order('event_date', { ascending: true })
+                .limit(limit);
+
+            if (error) throw error;
+
+            const result = data.map((item: any) => ({
+                id: item.id,
+                category: item.category || 'ceremony',
+                type: item.type === 'APPOINTMENT' ? '??' : item.type, // UI ??? ???
+                name: item.name,
+                relation: item.relation,
+                date: item.event_date.split('T')[0],
+                amount: item.amount,
+                isReceived: item.is_received,
+                memo: item.memo,
+                isPaid: item.memo?.includes('[????]') || false,
+                isCompleted: false, // item.is_completed (Column missing)
+                startTime: item.start_time,
+                endTime: item.end_time,
+                location: item.location,
+                source: 'events' as const,
+            }));
+
+            setCache(cacheKey, result);
+            return result;
+        });
+    } catch (e: any) {
+        showError(e.message ?? '?? ??? ?? ??');
+        return [];
+    }
+}
+
+/**
+ * ?ㅻ뒛 ?깅줉??紐⑤뱺 ?댁뿭 媛?몄삤湲?(??꾨씪?몄슜)
+ */
+export async function getTodayEvents(): Promise<EventRecord[]> {
+    const today = new Date().toISOString().split('T')[0];
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+    const { data: { user } } = await supabase.auth.getUser();
+    const userId = user?.id;
+    const inflightKey = `today_${userId ?? 'public'}_${today}`;
+
+    return withInflight(inflightKey, async () => {
+        const userFilter = (query: any) => userId ? query.eq('user_id', userId) : query;
+
+        // 1. Events (???/??)
+        const { data: events } = await userFilter(
+            supabase
+                .from('events')
+                .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location')
+                .gte('event_date', today)
+                .lt('event_date', tomorrow)
+                .order('event_date', { ascending: true })
+        );
+
+        // 2. Ledger (???)
+        const { data: ledger } = await userFilter(
+            supabase
+                .from('ledger')
+                .select('id, category, merchant_name, transaction_date, amount, memo')
+                .gte('transaction_date', today)
+                .lt('transaction_date', tomorrow)
+                .order('transaction_date', { ascending: true })
+        );
+
+        // 3. Bank (??)
+        const { data: bank } = await userFilter(
+            supabase
+                .from('bank_transactions')
+                .select('id, transaction_type, sender_name, receiver_name, category, transaction_date, amount, memo')
+                .gte('transaction_date', today)
+                .lt('transaction_date', tomorrow)
+                .order('transaction_date', { ascending: true })
+        );
+
+        const eventRecords = (events || []).map((item: any) => ({
             id: item.id,
             category: item.category || 'ceremony',
-            type: item.type === 'APPOINTMENT' ? '일정' : item.type, // UI 표시용 한글화
+            type: item.type,
             name: item.name,
             relation: item.relation,
             date: item.event_date.split('T')[0],
             amount: item.amount,
             isReceived: item.is_received,
             memo: item.memo,
-            isPaid: item.memo?.includes('[송금완료]') || false,
-            isCompleted: false, // item.is_completed (Column missing)
-            startTime: item.start_time,
-            endTime: item.end_time,
+            startTime: item.start_time || undefined,
+            endTime: item.end_time || undefined,
             location: item.location,
             source: 'events' as const,
         }));
 
-        setCache(cacheKey, result);
-        return result;
-    } catch (e: any) {
-        showError(e.message ?? '다음 이벤트 조회 실패');
-        return [];
-    }
-}
+        const ledgerRecords = (ledger || []).map((item: any) => ({
+            id: item.id,
+            category: 'expense' as EventCategory,
+            type: 'receipt' as const,
+            name: item.merchant_name || '??',
+            relation: item.category,
+            date: item.transaction_date.split('T')[0],
+            amount: item.amount,
+            isReceived: false,
+            memo: item.memo,
+            startTime: extractTime(item.transaction_date),
+            source: 'ledger' as const,
+        }));
 
-/**
- * 오늘 등록된 모든 내역 가져오기 (타임라인용)
- */
-export async function getTodayEvents(): Promise<EventRecord[]> {
-    const today = new Date().toISOString().split('T')[0];
-    const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+        const bankRecords = (bank || []).map((item: any) => ({
+            id: item.id,
+            category: 'expense' as EventCategory,
+            type: 'transfer' as const,
+            name: item.transaction_type === 'deposit' ? (item.sender_name || '??') : (item.receiver_name || '??'),
+            relation: item.category,
+            date: item.transaction_date.split('T')[0],
+            amount: item.amount,
+            isReceived: item.transaction_type === 'deposit',
+            memo: item.memo,
+            startTime: extractTime(item.transaction_date),
+            source: 'bank_transactions' as const,
+        }));
 
-    // 1. Events (경조사/일정)
-    const { data: events } = await supabase
-        .from('events')
-        .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location')
-        .gte('event_date', today)
-        .lt('event_date', tomorrow)
-        .order('event_date', { ascending: true });
-
-    // 2. Ledger (가계부)
-    const { data: ledger } = await supabase
-        .from('ledger')
-        .select('id, category, merchant_name, transaction_date, amount, memo')
-        .gte('transaction_date', today)
-        .lt('transaction_date', tomorrow)
-        .order('transaction_date', { ascending: true });
-
-    // 3. Bank (이체)
-    const { data: bank } = await supabase
-        .from('bank_transactions')
-        .select('id, transaction_type, sender_name, receiver_name, category, transaction_date, amount, memo')
-        .gte('transaction_date', today)
-        .lt('transaction_date', tomorrow)
-        .order('transaction_date', { ascending: true });
-
-    const eventRecords = (events || []).map((item: any) => ({
-        id: item.id,
-        category: item.category || 'ceremony',
-        type: item.type,
-        name: item.name,
-        relation: item.relation,
-        date: item.event_date.split('T')[0],
-        amount: item.amount,
-        isReceived: item.is_received,
-        memo: item.memo,
-        source: 'events' as const,
-    }));
-
-    const ledgerRecords = (ledger || []).map((item: any) => ({
-        id: item.id,
-        category: 'expense' as EventCategory,
-        type: 'receipt' as const,
-        name: item.merchant_name || '결제',
-        relation: item.category,
-        date: item.transaction_date.split('T')[0],
-        amount: item.amount,
-        isReceived: false,
-        memo: item.memo,
-        source: 'ledger' as const,
-    }));
-
-    const bankRecords = (bank || []).map((item: any) => ({
-        id: item.id,
-        category: 'expense' as EventCategory,
-        type: 'transfer' as const,
-        name: item.transaction_type === 'deposit' ? (item.sender_name || '입금') : (item.receiver_name || '송금'),
-        relation: item.category,
-        date: item.transaction_date.split('T')[0],
-        amount: item.amount,
-        isReceived: item.transaction_type === 'deposit',
-        memo: item.memo,
-        source: 'bank_transactions' as const,
-    }));
-
-    // 시간순 정렬
-    return [...eventRecords, ...ledgerRecords, ...bankRecords].sort((a, b) =>
-        new Date(a.date).getTime() - new Date(b.date).getTime()
-    );
+        // ????? ??
+        return [...eventRecords, ...ledgerRecords, ...bankRecords].sort((a, b) =>
+            new Date(a.date).getTime() - new Date(b.date).getTime()
+        );
+    });
 }
 
 export async function getEvents(year?: number, month?: number): Promise<EventRecord[]> {
     let startDate: string | undefined;
     let endDate: string | undefined;
+    const { data: { user } } = await supabase.auth.getUser();
+    const userId = user?.id;
 
     if (year && month) {
         const start = new Date(year, month - 1, 1);
@@ -156,95 +204,112 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
         endDate = end.toISOString().split('T')[0];
     }
 
-    // 1. Fetch Events
-    console.log('[getEvents] Fetching events table...', { year, month });
-    let eventsQuery = supabase
-        .from('events')
-        .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location')
-        .order('event_date', { ascending: true });
+    const inflightKey = `events_${userId ?? 'public'}_${startDate ?? 'all'}_${endDate ?? 'all'}`;
 
-    if (startDate && endDate) {
-        eventsQuery = eventsQuery.gte('event_date', startDate).lt('event_date', endDate);
-    }
+    return withInflight(inflightKey, async () => {
+        const userFilter = (query: any) => userId ? query.eq('user_id', userId) : query;
 
-    const { data: events, error: eventError } = await eventsQuery;
-    console.log('[getEvents] Events fetched:', events?.length);
+        // 1. Fetch Events
+        console.log('[getEvents] Fetching events table...', { year, month });
+        let eventsQuery = userFilter(
+            supabase
+                .from('events')
+                .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location')
+                .order('event_date', { ascending: true })
+        );
 
-    // 2. Fetch Ledger
-    console.log('[getEvents] Fetching ledger table...');
-    let ledgerQuery = supabase
-        .from('ledger')
-        .select('id, category, merchant_name, transaction_date, amount, memo')
-        .order('transaction_date', { ascending: true });
+        if (startDate && endDate) {
+            eventsQuery = eventsQuery.gte('event_date', startDate).lt('event_date', endDate);
+        }
 
-    if (startDate && endDate) {
-        ledgerQuery = ledgerQuery.gte('transaction_date', startDate).lt('transaction_date', endDate);
-    }
+        const { data: events, error: eventError } = await eventsQuery;
+        console.log('[getEvents] Events fetched:', events?.length);
 
-    const { data: ledger, error: ledgerError } = await ledgerQuery;
-    console.log('[getEvents] Ledger fetched:', ledger?.length);
+        // 2. Fetch Ledger
+        console.log('[getEvents] Fetching ledger table...');
+        let ledgerQuery = userFilter(
+            supabase
+                .from('ledger')
+                .select('id, category, merchant_name, transaction_date, amount, memo')
+                .order('transaction_date', { ascending: true })
+        );
 
-    // 3. Fetch Bank Transactions
-    console.log('[getEvents] Fetching bank_transactions table...');
-    let bankQuery = supabase
-        .from('bank_transactions')
-        .select('id, transaction_type, sender_name, receiver_name, category, transaction_date, amount, memo')
-        .order('transaction_date', { ascending: true });
+        if (startDate && endDate) {
+            ledgerQuery = ledgerQuery.gte('transaction_date', startDate).lt('transaction_date', endDate);
+        }
 
-    if (startDate && endDate) {
-        bankQuery = bankQuery.gte('transaction_date', startDate).lt('transaction_date', endDate);
-    }
+        const { data: ledger, error: ledgerError } = await ledgerQuery;
+        console.log('[getEvents] Ledger fetched:', ledger?.length);
 
-    const { data: bank, error: bankError } = await bankQuery;
-    console.log('[getEvents] Bank fetched:', bank?.length);
+        // 3. Fetch Bank Transactions
+        console.log('[getEvents] Fetching bank_transactions table...');
+        let bankQuery = userFilter(
+            supabase
+                .from('bank_transactions')
+                .select('id, transaction_type, sender_name, receiver_name, category, transaction_date, amount, memo')
+                .order('transaction_date', { ascending: true })
+        );
 
-    const eventRecords = (events || []).map((item: any) => ({
-        id: item.id,
-        category: item.category || 'ceremony',
-        type: item.type,
-        name: item.name,
-        relation: item.relation,
-        date: item.event_date.split('T')[0],
-        amount: item.amount,
-        isReceived: item.is_received,
-        memo: item.memo,
-        isPaid: item.memo?.includes('[송금완료]') || false,
-        source: 'events' as const,
-    }));
+        if (startDate && endDate) {
+            bankQuery = bankQuery.gte('transaction_date', startDate).lt('transaction_date', endDate);
+        }
 
-    const ledgerRecords = (ledger || []).map((item: any) => ({
-        id: item.id,
-        category: 'expense' as EventCategory,
-        type: 'receipt' as const,
-        name: item.merchant_name || '결제',
-        relation: item.category,
-        date: item.transaction_date.split('T')[0],
-        amount: item.amount,
-        isReceived: false,
-        memo: item.memo,
-        source: 'ledger' as const,
-    }));
+        const { data: bank, error: bankError } = await bankQuery;
+        console.log('[getEvents] Bank fetched:', bank?.length);
 
-    const bankRecords = (bank || []).map((item: any) => ({
-        id: item.id,
-        category: 'expense' as EventCategory,
-        type: 'transfer' as const,
-        name: item.transaction_type === 'deposit' ? (item.sender_name || '입금') : (item.receiver_name || '송금'),
-        relation: item.category,
-        date: item.transaction_date.split('T')[0],
-        amount: item.amount,
-        isReceived: item.transaction_type === 'deposit',
-        memo: item.memo,
-        source: 'bank_transactions' as const,
-    }));
+        const eventRecords = (events || []).map((item: any) => ({
+            id: item.id,
+            category: item.category || 'ceremony',
+            type: item.type,
+            name: item.name,
+            relation: item.relation,
+            date: item.event_date.split('T')[0],
+            amount: item.amount,
+            isReceived: item.is_received,
+            memo: item.memo,
+            isPaid: item.memo?.includes('[????]') || false,
+            startTime: item.start_time || undefined,
+            endTime: item.end_time || undefined,
+            location: item.location,
+            source: 'events' as const,
+        }));
 
-    return [...eventRecords, ...ledgerRecords, ...bankRecords].sort((a, b) =>
-        new Date(a.date).getTime() - new Date(b.date).getTime()
-    );
+        const ledgerRecords = (ledger || []).map((item: any) => ({
+            id: item.id,
+            category: 'expense' as EventCategory,
+            type: 'receipt' as const,
+            name: item.merchant_name || '??',
+            relation: item.category,
+            date: item.transaction_date.split('T')[0],
+            amount: item.amount,
+            isReceived: false,
+            memo: item.memo,
+            startTime: extractTime(item.transaction_date),
+            source: 'ledger' as const,
+        }));
+
+        const bankRecords = (bank || []).map((item: any) => ({
+            id: item.id,
+            category: 'expense' as EventCategory,
+            type: 'transfer' as const,
+            name: item.transaction_type === 'deposit' ? (item.sender_name || '??') : (item.receiver_name || '??'),
+            relation: item.category,
+            date: item.transaction_date.split('T')[0],
+            amount: item.amount,
+            isReceived: item.transaction_type === 'deposit',
+            memo: item.memo,
+            startTime: extractTime(item.transaction_date),
+            source: 'bank_transactions' as const,
+        }));
+
+        return [...eventRecords, ...ledgerRecords, ...bankRecords].sort((a, b) =>
+            new Date(a.date).getTime() - new Date(b.date).getTime()
+        );
+    });
 }
 
 /**
- * 일반 이벤트 삭제 (Fix: Missing function)
+ * ?쇰컲 ?대깽????젣 (Fix: Missing function)
  */
 export async function deleteEvent(id: string) {
     const { error } = await supabase
@@ -256,6 +321,7 @@ export async function deleteEvent(id: string) {
         console.error('Error deleting event:', error);
         throw error;
     }
-    invalidateCache(); // ✅ 캐시 무효화
+    const { data: { user } } = await supabase.auth.getUser();
+    invalidateUserScopedCache(['upcoming_', 'stats_'], user?.id); // ??罹먯떆 臾댄슚??
     return { success: true };
 }
