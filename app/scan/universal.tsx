@@ -8,7 +8,8 @@ import {
     TextInput,
     ScrollView,
     AppState,
-    Platform
+    Platform,
+    Linking
 } from 'react-native';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Audio } from 'expo-av';
@@ -16,6 +17,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Colors } from '../../constants/Colors';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { extractTextFromImage, maybePreprocessChatText, extractTextWithGoogleVision } from '../../services/ocr';
 import { analyzeImageText, analyzeImageVisual, ScannedData, transcribeAudio } from '../../services/ai/OpenAIService';
 import { fetchUrlContent } from '../../services/WebScraperService';
@@ -222,26 +224,24 @@ export default function UniversalScannerScreen() {
             }
         });
 
-        // 1. Check Permissions
-        const perm = await Audio.getPermissionsAsync();
-        if (perm.status === 'granted') {
+        // 1. Request Permissions Directly (Force System Dialog)
+        const { status } = await Audio.requestPermissionsAsync();
+
+        if (status === 'granted') {
             setTimeout(() => voiceService.startLocalSTT(), 200);
-        } else if (perm.canAskAgain) {
-            const { status } = await Audio.requestPermissionsAsync();
-            if (status === 'granted') {
-                setTimeout(() => voiceService.startLocalSTT(), 200);
-            } else {
-                Alert.alert('권한 필요', '설정에서 마이크 권한을 허용해주세요.');
-                setVoiceStateSync('ERROR');
-                // [Patch] P7: Standardize Reason & P6: Flush
-                logger?.logVoiceLocal(false, 0, 'permission_denied', { type: 'retry_denied' });
-                await logger?.flush();
-            }
         } else {
-            Alert.alert('권한 필요', '설정에서 마이크 권한을 허용해주세요.');
-            setVoiceStateSync('ERROR');
-            // [Patch] P7: Standardize Reason & P6: Flush
-            logger?.logVoiceLocal(false, 0, 'permission_denied', { type: 'permanent_denied' });
+            Alert.alert(
+                '권한 필요',
+                '음성 인식을 위해 마이크 권한이 필요합니다.\n설정에서 권한을 허용해주세요.',
+                [
+                    { text: '취소', style: 'cancel' },
+                    { text: '설정으로 이동', onPress: () => Linking.openSettings() }
+                ]
+            );
+            setVoiceStateSync('IDLE');
+
+            // Log Failure
+            logger?.logVoiceLocal(false, 0, 'permission_denied', { type: 'user_denied_or_permanent' });
             await logger?.flush();
         }
     };
@@ -646,120 +646,126 @@ export default function UniversalScannerScreen() {
                 </View>
 
                 {/* Voice Status Overlay Area */}
+                {/* Voice Status Overlay Area */}
                 {isVoiceMode && (
-                    <View style={[styles.voiceStatusContainer, { borderColor: getColorForState(voiceState, colors), backgroundColor: getBgForState(voiceState, colors) }]}>
-                        <View style={styles.voiceIconContainer}>
-                            <Ionicons name={voiceState.includes('RECORDING') ? "mic" : "mic-outline"} size={32} color={getColorForState(voiceState, colors)} />
-                            {voiceState.includes('RECORDING') && (
-                                <View style={styles.recordingDot} />
-                            )}
-                        </View>
-                        <Text style={[styles.voiceStatusText, { color: colors.text }]}>
-                            {getMessageForState(voiceState)}
-                        </Text>
-
-                        {/* Real-time Text Preview (For Local STT) */}
-                        {voiceState === 'RECORDING_LOCAL' && voiceText.length > 0 && (
-                            <Text style={styles.previewText}>"{voiceText}"</Text>
-                        )}
-
-                        {/* IDLE State - Mixed Control (P1) */}
-                        {voiceState === 'IDLE' && (
-                            <View style={{ alignItems: 'center', gap: 12 }}>
-                                <TouchableOpacity onPress={restartLocalSTT} style={[styles.stopButton, { backgroundColor: colors.primary }]}>
-                                    <Text style={styles.stopButtonText}>🎙 다시 말하기 (Local)</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity onPress={() => voiceService.startWhisperRecording()} style={{ padding: 8 }}>
-                                    <Text style={{ color: colors.subText, fontSize: 13, textDecorationLine: 'underline' }}>정밀 인식(Whisper)으로 전환</Text>
-                                </TouchableOpacity>
-                            </View>
-                        )}
-
-                        {/* CONFIRM_TEXT State (P16) */}
-                        {voiceState === 'CONFIRM_TEXT' && (
-                            <View style={{ gap: 12, width: '100%' }}>
-                                <Text style={[styles.voiceStatusText, { color: colors.subText }]}>인식 결과 확인</Text>
-                                <TextInput
-                                    value={confirmText}
-                                    onChangeText={setConfirmText}
-                                    multiline
-                                    editable
-                                    style={[
-                                        styles.confirmInput,
-                                        {
-                                            color: colors.text,
-                                            borderColor: colors.border,
-                                            backgroundColor: colors.card
-                                        }
-                                    ]}
-                                    placeholder="인식된 텍스트를 확인/수정하세요"
-                                    placeholderTextColor={colors.subText}
-                                />
-                                {!isConfirmTextValid && (
-                                    <Text style={[styles.confirmHint, { color: colors.subText }]}>텍스트를 2자 이상 입력해주세요.</Text>
+                    <LinearGradient
+                        colors={['#E0F2FE', '#DDD6FE', '#FCE7F3']}
+                        style={styles.gradientBackground}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                    >
+                        <View style={styles.glassCard}>
+                            <View style={styles.voiceIconContainer}>
+                                <Ionicons name={voiceState.includes('RECORDING') ? "mic" : "mic-outline"} size={24} color={getColorForState(voiceState, colors)} />
+                                {voiceState.includes('RECORDING') && (
+                                    <View style={styles.recordingDot} />
                                 )}
-                                <TouchableOpacity
-                                    onPress={handleConfirmAnalysis}
-                                    disabled={!isConfirmTextValid}
-                                    style={[
-                                        styles.stopButton,
-                                        { backgroundColor: colors.primary, opacity: isConfirmTextValid ? 1 : 0.5 }
-                                    ]}
-                                >
-                                    <Text style={styles.stopButtonText}>✅ 승인하고 분석</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity onPress={restartLocalSTT} style={[styles.stopButton, { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }]}>
-                                    <Text style={[styles.stopButtonText, { color: colors.text }]}>🎤 다시 말하기 (Local)</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity onPress={() => voiceService.startWhisperRecording()} style={{ padding: 8, alignSelf: 'center' }}>
-                                    <Text style={{ color: colors.subText, fontSize: 13, textDecorationLine: 'underline' }}>정밀 인식(Whisper)으로 전환</Text>
-                                </TouchableOpacity>
                             </View>
-                        )}
+                            <Text style={[styles.voiceStatusText, { color: colors.text }]}>
+                                {getMessageForState(voiceState)}
+                            </Text>
 
-                        {/* QUALITY_FAIL State (P2) */}
-                        {voiceState === 'QUALITY_FAIL' && (
-                            <View style={{ gap: 12 }}>
-                                <TouchableOpacity onPress={restartLocalSTT} style={[styles.stopButton, { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }]}>
-                                    <Text style={[styles.stopButtonText, { color: colors.text }]}>다시 시도 (빠름)</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity onPress={() => voiceService.startWhisperRecording()} style={[styles.stopButton, { backgroundColor: colors.primary }]}>
-                                    <Text style={styles.stopButtonText}>🎙 정확하게 다시 말하기 (Whisper)</Text>
-                                </TouchableOpacity>
-                            </View>
-                        )}
+                            {/* Real-time Text Preview (For Local STT) */}
+                            {voiceState === 'RECORDING_LOCAL' && voiceText.length > 0 && (
+                                <Text style={styles.previewText}>"{voiceText}"</Text>
+                            )}
 
-                        {/* ERROR State - System Error */}
-                        {voiceState === 'ERROR' && (
-                            <View style={{ gap: 12 }}>
-                                <TouchableOpacity onPress={restartLocalSTT} style={[styles.stopButton, { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }]}>
-                                    <Text style={[styles.stopButtonText, { color: colors.text }]}>다시 시도</Text>
-                                </TouchableOpacity>
-                            </View>
-                        )}
+                            {/* IDLE State - Mixed Control (P1) */}
+                            {voiceState === 'IDLE' && (
+                                <View style={{ alignItems: 'center', gap: 12 }}>
+                                    <TouchableOpacity onPress={restartLocalSTT} style={[styles.stopButton, { backgroundColor: colors.primary }]}>
+                                        <Text style={styles.stopButtonText}>🎙 다시 말하기 (Local)</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity onPress={() => voiceService.startWhisperRecording()} style={{ padding: 8 }}>
+                                        <Text style={{ color: colors.subText, fontSize: 13, textDecorationLine: 'underline' }}>정밀 인식(Whisper)으로 전환</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
 
-                        {/* Active Recording State (Local) */}
-                        {voiceState === 'RECORDING_LOCAL' && (
-                            <View style={{ gap: 12 }}>
-                                <TouchableOpacity onPress={() => finalizeLocalText(voiceText)} style={styles.stopButton}>
+                            {/* CONFIRM_TEXT State (P16) */}
+                            {voiceState === 'CONFIRM_TEXT' && (
+                                <View style={{ gap: 12, width: '100%' }}>
+                                    <Text style={[styles.voiceStatusText, { color: colors.subText }]}>인식 결과 확인</Text>
+                                    <TextInput
+                                        value={confirmText}
+                                        onChangeText={setConfirmText}
+                                        multiline
+                                        editable
+                                        style={[
+                                            styles.confirmInput,
+                                            {
+                                                color: colors.text,
+                                                borderColor: colors.border,
+                                                backgroundColor: colors.card
+                                            }
+                                        ]}
+                                        placeholder="인식된 텍스트를 확인/수정하세요"
+                                        placeholderTextColor={colors.subText}
+                                    />
+                                    {!isConfirmTextValid && (
+                                        <Text style={[styles.confirmHint, { color: colors.subText }]}>텍스트를 2자 이상 입력해주세요.</Text>
+                                    )}
+                                    <TouchableOpacity
+                                        onPress={handleConfirmAnalysis}
+                                        disabled={!isConfirmTextValid}
+                                        style={[
+                                            styles.stopButton,
+                                            { backgroundColor: colors.primary, opacity: isConfirmTextValid ? 1 : 0.5 }
+                                        ]}
+                                    >
+                                        <Text style={styles.stopButtonText}>✅ 승인하고 분석</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity onPress={restartLocalSTT} style={[styles.stopButton, { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }]}>
+                                        <Text style={[styles.stopButtonText, { color: colors.text }]}>🎤 다시 말하기 (Local)</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity onPress={() => voiceService.startWhisperRecording()} style={{ padding: 8, alignSelf: 'center' }}>
+                                        <Text style={{ color: colors.subText, fontSize: 13, textDecorationLine: 'underline' }}>정밀 인식(Whisper)으로 전환</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+
+                            {/* QUALITY_FAIL State (P2) */}
+                            {voiceState === 'QUALITY_FAIL' && (
+                                <View style={{ gap: 12 }}>
+                                    <TouchableOpacity onPress={restartLocalSTT} style={[styles.stopButton, { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }]}>
+                                        <Text style={[styles.stopButtonText, { color: colors.text }]}>다시 시도 (빠름)</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity onPress={() => voiceService.startWhisperRecording()} style={[styles.stopButton, { backgroundColor: colors.primary }]}>
+                                        <Text style={styles.stopButtonText}>🎙 정확하게 다시 말하기 (Whisper)</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+
+                            {/* ERROR State - System Error */}
+                            {voiceState === 'ERROR' && (
+                                <View style={{ gap: 12 }}>
+                                    <TouchableOpacity onPress={restartLocalSTT} style={[styles.stopButton, { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }]}>
+                                        <Text style={[styles.stopButtonText, { color: colors.text }]}>다시 시도</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+
+                            {/* Active Recording State (Local) */}
+                            {voiceState === 'RECORDING_LOCAL' && (
+                                <View style={{ gap: 12 }}>
+                                    <TouchableOpacity onPress={() => finalizeLocalText(voiceText)} style={styles.stopButton}>
+                                        <Text style={styles.stopButtonText}>완료</Text>
+                                    </TouchableOpacity>
+                                    {/* Allow switching to Whisper if local is bad */}
+                                    <TouchableOpacity onPress={() => voiceService.startWhisperRecording()} style={{ padding: 10 }}>
+                                        <Text style={{ color: colors.subText, textDecorationLine: 'underline' }}>잘 안되나요? 정밀 인식으로 전환</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+
+                            {/* Active Recording State (Whisper) */}
+                            {voiceState === 'RECORDING_WHISPER' && (
+                                <TouchableOpacity onPress={handleStopWhisper} style={styles.stopButton}>
                                     <Text style={styles.stopButtonText}>완료</Text>
                                 </TouchableOpacity>
-                                {/* Allow switching to Whisper if local is bad */}
-                                <TouchableOpacity onPress={() => voiceService.startWhisperRecording()} style={{ padding: 10 }}>
-                                    <Text style={{ color: colors.subText, textDecorationLine: 'underline' }}>잘 안되나요? 정밀 인식으로 전환</Text>
-                                </TouchableOpacity>
-                            </View>
-                        )}
-
-                        {/* Active Recording State (Whisper) */}
-                        {voiceState === 'RECORDING_WHISPER' && (
-                            <TouchableOpacity onPress={handleStopWhisper} style={styles.stopButton}>
-                                <Text style={styles.stopButtonText}>완료</Text>
-                            </TouchableOpacity>
-                        )}
-
-
-                    </View>
+                            )}
+                        </View>
+                    </LinearGradient>
                 )}
 
                 {/* Input Section (Hidden in Voice Mode unless needed fallback) */}
@@ -1010,6 +1016,26 @@ const styles = StyleSheet.create({
         fontSize: 14,
     },
     // Voice Mode Styles
+    gradientBackground: {
+        width: '100%',
+        minHeight: 280,
+        borderRadius: 24,
+        marginBottom: 32,
+        overflow: 'hidden',
+    },
+    glassCard: {
+        flex: 1,
+        alignItems: 'center',
+        padding: 24,
+        margin: 16,
+        borderRadius: 20,
+        backgroundColor: 'rgba(255, 255, 255, 0.85)',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 12,
+        elevation: 8,
+    },
     voiceStatusContainer: {
         alignItems: 'center',
         padding: 24,
@@ -1019,7 +1045,7 @@ const styles = StyleSheet.create({
         borderStyle: 'dashed'
     },
     voiceIconContainer: {
-        marginBottom: 16,
+        marginBottom: 12,
         position: 'relative'
     },
     recordingDot: {
@@ -1033,17 +1059,17 @@ const styles = StyleSheet.create({
     },
     voiceStatusText: {
         fontFamily: 'Pretendard-Bold',
-        fontSize: 18,
+        fontSize: 14,
         textAlign: 'center',
         marginBottom: 20
     },
     previewText: {
-        fontFamily: 'Pretendard-Regular',
-        fontSize: 15,
-        color: Colors.subText,
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 26,
+        fontWeight: '600',
+        color: '#1E3A8A',
         textAlign: 'center',
         marginTop: 16,
-        fontStyle: 'italic'
     },
     stopButton: {
         paddingHorizontal: 24,
