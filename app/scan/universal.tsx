@@ -82,6 +82,8 @@ export default function UniversalScannerScreen() {
     const localSessionTokenRef = useRef(0);
     const finalizeLocalTextRef = useRef<(text: string) => void>(() => { });
     const initVoiceSessionRef = useRef<() => void>(() => { });
+    const lastInitTimeRef = useRef(0); // 🔧 Debounce guard for infinite loop prevention
+    const sessionStartTimeRef = useRef(0); // 🔧 Track session start for auto-retry logic
     const MIN_CONFIRM_TEXT_LENGTH = 2;
     const confirmTextTrimmed = confirmText.trim();
     const isConfirmTextValid = confirmTextTrimmed.length >= MIN_CONFIRM_TEXT_LENGTH;
@@ -166,25 +168,8 @@ export default function UniversalScannerScreen() {
     }, [clearFinalizeTimeout, setVoiceStateSync]);
 
     const initVoiceSession = async () => {
-        bumpLocalSessionToken();
-        setVoiceText('');
-        setConfirmText('');
-        setConfirmOriginalText('');
-        setVoiceStateSync('IDLE');
-        clearFinalizeTimeout();
-        pendingFinalTextRef.current = '';
-
-        // [Patch] Start Logging Session (Safe Mode)
-        let logger = getCurrentOcrLogger();
-        if (!logger) {
-            console.log('[Voice] Logger was null, creating new one.');
-            logger = createOcrLogger();
-        }
-
-        // Use a unique ID for voice, mocking an "image hash"
-        const voiceSessionId = `voice-${Date.now()}`;
-        await logger?.startSession(voiceSessionId);
-
+        // 🔧 ALWAYS attach listeners first (connects UI to VoiceService)
+        // This ensures new component gets listeners even if debounced
         voiceService.setListeners({
             onStateChange: (state) => setVoiceState(state),
             onLocalResult: (text, isFinal) => {
@@ -209,8 +194,6 @@ export default function UniversalScannerScreen() {
                     console.warn('[Voice] Suppressed error during confirm/processing:', msg);
                     return;
                 }
-                console.warn('[Voice] Error:', msg);
-                setVoiceStateSync('ERROR');
 
                 // 🔧 에러 타입 세분화 - 데이터 분석을 위한 구체적 분류
                 let reason: FallbackReason = 'voice_error';
@@ -218,17 +201,66 @@ export default function UniversalScannerScreen() {
                 else if (msg.includes('권한')) reason = 'permission_denied';
                 else if (msg.includes('네트워크')) reason = 'voice_network_error';
 
-                // Log Failure
+                // 🔧 Auto-Retry: Immediate failure (< 1.5s) likely means mic not ready
+                if (reason === 'voice_no_match') {
+                    const elapsed = Date.now() - sessionStartTimeRef.current;
+                    if (elapsed < 1500) {
+                        console.log('[Voice] Immediate no-match detected, auto-retrying...');
+                        sessionStartTimeRef.current = Date.now(); // Reset timer
+                        setTimeout(() => restartLocalSTT(), 300); // Short delay then retry
+                        return; // Don't set ERROR state
+                    }
+                }
+
+                console.warn('[Voice] Error:', msg);
+                setVoiceStateSync('ERROR');
+
+                // Log Failure (use getCurrentOcrLogger to avoid stale closure)
+                const logger = getCurrentOcrLogger();
                 logger?.logVoiceLocal(false, 0, reason, { error: msg });
-                logger?.flush(); // Async flush (no await here to avoid blocking UI excessively)
+                logger?.flush();
             }
         });
+
+        // 🔧 Guard 1: Debounce (2초 이내 중복 호출 방지)
+        if (Date.now() - lastInitTimeRef.current < 2000) {
+            console.log('[Voice] initVoiceSession debounced (listeners updated)');
+            return;
+        }
+        lastInitTimeRef.current = Date.now();
+
+        // 🔧 Guard 2: 이미 활성 세션이면 중복 초기화 방지
+        const currentState = voiceStateRef.current;
+        if (currentState === 'RECORDING_LOCAL' || currentState === 'RECORDING_WHISPER' || currentState === 'CONFIRM_TEXT' || currentState === 'PROCESSING') {
+            console.log('[Voice] initVoiceSession skipped - already active:', currentState);
+            return;
+        }
+
+        bumpLocalSessionToken();
+        setVoiceText('');
+        setConfirmText('');
+        setConfirmOriginalText('');
+        setVoiceStateSync('IDLE');
+        clearFinalizeTimeout();
+        pendingFinalTextRef.current = '';
+
+        // [Patch] Start Logging Session (Safe Mode)
+        let logger = getCurrentOcrLogger();
+        if (!logger) {
+            console.log('[Voice] Logger was null, creating new one.');
+            logger = createOcrLogger();
+        }
+
+        // Use a unique ID for voice, mocking an "image hash"
+        const voiceSessionId = `voice-${Date.now()}`;
+        await logger?.startSession(voiceSessionId);
 
         // 1. Request Permissions Directly (Force System Dialog)
         const { status } = await Audio.requestPermissionsAsync();
 
         if (status === 'granted') {
-            setTimeout(() => voiceService.startLocalSTT(), 200);
+            sessionStartTimeRef.current = Date.now(); // Track start
+            setTimeout(() => voiceService.startLocalSTT(), 500); // Increased from 200ms
         } else {
             Alert.alert(
                 '권한 필요',
@@ -741,6 +773,26 @@ export default function UniversalScannerScreen() {
                                 <View style={{ gap: 12 }}>
                                     <TouchableOpacity onPress={restartLocalSTT} style={[styles.stopButton, { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }]}>
                                         <Text style={[styles.stopButtonText, { color: colors.text }]}>다시 시도</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+
+                            {/* QUALITY_FAIL State - Voice Not Detected */}
+                            {voiceState === 'QUALITY_FAIL' && (
+                                <View style={{ gap: 12 }}>
+                                    <TouchableOpacity
+                                        onPress={restartLocalSTT}
+                                        style={[styles.stopButton, { backgroundColor: colors.primary }]}
+                                    >
+                                        <Text style={styles.stopButtonText}>다시 말하기</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        onPress={() => voiceService.startWhisperRecording()}
+                                        style={{ padding: 10 }}
+                                    >
+                                        <Text style={{ color: colors.subText, fontSize: 13, textDecorationLine: 'underline' }}>
+                                            정밀 인식(Whisper)으로 전환
+                                        </Text>
                                     </TouchableOpacity>
                                 </View>
                             )}

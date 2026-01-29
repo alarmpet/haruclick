@@ -1,12 +1,11 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated, Easing, Pressable, RefreshControl } from 'react-native';
-import { Svg, Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated, Pressable, RefreshControl, ImageBackground, Image } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Colors } from '../constants/Colors';
 import { useRouter } from 'expo-router';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase, getTodayEvents, getUpcomingEvents, fetchPeriodStats, EventRecord } from '../services/supabase';
 import { getEventEmoji } from '../services/EmojiService';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../contexts/ThemeContext';
@@ -26,10 +25,6 @@ export default function Home() {
     const [todayEvents, setTodayEvents] = useState<EventRecord[]>([]);
     const [upcomingEvents, setUpcomingEvents] = useState<EventRecord[]>([]);
     const [refreshing, setRefreshing] = useState(false);
-
-    // Ripple Animation (2개만 사용 - 잔잔하게)
-    const ripple1 = useRef(new Animated.Value(0)).current;
-    const ripple2 = useRef(new Animated.Value(0)).current;
 
     // 버튼 press 애니메이션
     const scaleValue = useRef(new Animated.Value(1)).current;
@@ -87,37 +82,7 @@ export default function Home() {
         };
     }, [todayKey]);
 
-    useEffect(() => {
-        const createRipple = (anim: Animated.Value, delay: number) => {
-            return Animated.loop(
-                Animated.sequence([
-                    Animated.delay(delay),
-                    Animated.timing(anim, {
-                        toValue: 1,
-                        duration: 3500,
-                        easing: Easing.out(Easing.ease),
-                        useNativeDriver: true,
-                    }),
-                    Animated.timing(anim, {
-                        toValue: 0,
-                        duration: 0,
-                        useNativeDriver: true,
-                    }),
-                ])
-            );
-        };
 
-        const anim1 = createRipple(ripple1, 0);
-        const anim2 = createRipple(ripple2, 1200);
-
-        anim1.start();
-        anim2.start();
-
-        return () => {
-            anim1.stop();
-            anim2.stop();
-        };
-    }, []);
 
     const fetchEvents = useCallback(async () => {
         try {
@@ -216,84 +181,44 @@ export default function Home() {
 
                 {/* Slogan */}
                 <View style={styles.sloganContainer}>
-                    <Text style={[styles.sloganText, { color: colors.subText }]}>
-                        복잡하고 번거로운 기록은 그만,
-                    </Text>
-                    <Text style={[styles.sloganText, { color: colors.subText }]}>
-                        <Text style={[styles.sloganHighlight, { color: colors.orange }]}>클릭만으로</Text> 하루를 기록하세요
+                    <Text style={[styles.newSlogan, { color: colors.text }]}>
+                        당신의 <Text style={styles.sloganEmphasis}>하루</Text>{'  '}<Text style={styles.sloganEmphasis}>클릭</Text>으로 정리
                     </Text>
                 </View>
 
-                {/* ✅ New Geometric Hero Section */}
-                <View style={styles.heroSection}>
-                    <View style={styles.heroWrapper}>
-                        {/* 1. Ripples (Absolute, Centered) */}
-                        <Animated.View style={[
-                            styles.ripple,
-                            {
-                                transform: [{
-                                    scale: ripple1.interpolate({
-                                        inputRange: [0, 1],
-                                        outputRange: [1, 1.7]
-                                    })
-                                }],
-                                opacity: ripple1.interpolate({
-                                    inputRange: [0, 1],
-                                    outputRange: [0.2, 0]
-                                })
-                            }
-                        ]} />
-                        <Animated.View style={[
-                            styles.ripple,
-                            {
-                                transform: [{
-                                    scale: ripple2.interpolate({
-                                        inputRange: [0, 1],
-                                        outputRange: [1, 1.7]
-                                    })
-                                }],
-                                opacity: ripple2.interpolate({
-                                    inputRange: [0, 1],
-                                    outputRange: [0.2, 0]
-                                })
-                            }
-                        ]} />
-
-                        {/* 2. Static Glow (Absolute, Centered) */}
-                        <View style={styles.staticGlowContainer}>
-                            <Svg height="240" width="240" viewBox="0 0 240 240">
-                                <Defs>
-                                    <RadialGradient id="grad" cx="120" cy="120" rx="120" ry="120" fx="120" fy="120" gradientUnits="userSpaceOnUse">
-                                        <Stop offset="0.3" stopColor={colors.orange} stopOpacity="0.4" />
-                                        <Stop offset="1" stopColor={colors.orange} stopOpacity="0" />
-                                    </RadialGradient>
-                                </Defs>
-                                <Circle cx="120" cy="120" r="120" fill="url(#grad)" />
-                            </Svg>
-                        </View>
-
-                        {/* 3. Main Button (Centered) */}
+                {/* Premium Hero Card */}
+                <View style={styles.heroCard}>
+                    <ImageBackground
+                        source={require('../assets/images/hero_bg_workspace.png')}
+                        style={styles.heroCardBg}
+                        imageStyle={styles.heroCardBgImage}
+                    >
+                        {/* Gradient Overlay */}
                         <Pressable
-                            onPressIn={handlePressIn}
-                            onPressOut={handlePressOut}
                             onPress={handleScanPress}
+                            style={styles.heroCardOverlay}
                         >
-                            <Animated.View style={[styles.heroButton, { backgroundColor: colors.orange, transform: [{ scale: scaleValue }], shadowColor: colors.orange, shadowOpacity: 0.6, shadowRadius: 30, shadowOffset: { width: 0, height: 0 }, elevation: 0 }]}>
-                                <Ionicons name="camera" size={48} color={Colors.white} />
-                                <Text style={styles.heroButtonText}>지금 사진을 찍거나</Text>
-                                <Text style={styles.heroButtonText}>이미지를 올려보세요</Text>
-                            </Animated.View>
-                        </Pressable>
-                    </View>
+                            {/* Camera Icon */}
+                            <MaterialCommunityIcons
+                                name="camera-plus-outline"
+                                size={100}
+                                color="#FFFFFF"
+                                style={styles.cameraIcon}
+                            />
 
-                    {/* ✅ Voice CTA (Redesigned: Emoji + Text Block) */}
+                            {/* Subtitle */}
+                            <Text style={styles.heroSubtext}>오늘의 기록을 남겨보세요</Text>
+                        </Pressable>
+                    </ImageBackground>
+
+                    {/* Voice FAB (Floating Action Button) */}
                     <TouchableOpacity
                         onPress={() => router.push({ pathname: '/scan/universal', params: { mode: 'voice' } })}
-                        style={styles.voiceCtaContainer}
-                        activeOpacity={0.7}
+                        style={styles.voiceFab}
+                        activeOpacity={0.8}
                     >
-                        <Text style={styles.voiceEmoji}>🎙️</Text>
-                        <Text style={styles.voiceText}>음성으로 등록하기</Text>
+                        <Ionicons name="mic" size={20} color={colors.orange} />
+                        <Text style={styles.voiceFabText}>음성으로 빠르게</Text>
                     </TouchableOpacity>
                 </View>
                 {/* Quick Links */}
@@ -502,88 +427,90 @@ const styles = StyleSheet.create({
     },
     sloganHighlight: {
         fontFamily: 'Pretendard-Bold',
-        fontSize: 18, // 20 -> 18 줄임
+        fontSize: 18,
         color: Colors.orange,
     },
 
-    // Hero Section (New Layout)
-    heroSection: {
-        alignItems: 'center',
-        marginTop: 20, // 40 -> 20 (Button moved up)
-        marginBottom: 40,
-    },
-    heroWrapper: {
-        width: 240,  // GLOW_SIZE
-        height: 240, // GLOW_SIZE
-        alignItems: 'center',
-        justifyContent: 'center',
-        position: 'relative', // Context for absolute children
-    },
-    ripple: {
-        position: 'absolute',
-        width: 160, // HERO_SIZE
-        height: 160,
-        borderRadius: 80,
-        backgroundColor: Colors.orange,
-        // Centered by Flexbox in heroWrapper, no top/left needed if we use absolute fill or center alignment
-        // But since heroWrapper is 240 and ripple is 160:
-        // top = (240 - 160) / 2 = 40
-        top: 40,
-        left: 40,
-        zIndex: 0,
-    },
-    staticGlowContainer: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        width: 240,
-        height: 240,
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 0,
-    },
-    heroButton: {
-        width: 160,
-        height: 160,
-        borderRadius: 80,
-        backgroundColor: Colors.orange,
-        alignItems: 'center',
-        justifyContent: 'center',
-        shadowColor: Colors.orange,
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.6,
-        shadowRadius: 30,
-        elevation: 0,
-        zIndex: 10,
-    },
-    voiceCtaContainer: {
-        marginTop: 24, // Gap below the glow geometric area
-        alignItems: 'center',
-        paddingVertical: 10,
-        paddingHorizontal: 20,
-    },
-    voiceEmoji: {
-        fontSize: 28,
-        marginBottom: 4,
-    },
-    voiceText: {
-        fontFamily: 'Pretendard-Bold', // Bold emphasis
-        fontSize: 16,               // Larger text
-        color: Colors.orange,
-    },
-    heroButtonText: {
+    // New Slogan - Trendy & Minimal with Glow
+    newSlogan: {
         fontFamily: 'Pretendard-Medium',
-        fontSize: 13,
-        color: Colors.white,
-        marginTop: 2,
+        fontSize: 24,
         textAlign: 'center',
-        lineHeight: 18,
+        letterSpacing: 0.5,
     },
-    heroText: {
-        fontFamily: 'Pretendard-Medium',
-        fontSize: 13, // 12 -> 13
-        color: 'rgba(255,255,255,0.9)',
-        marginTop: 4,
+    sloganEmphasis: {
+        color: '#00B8B8',
+        fontFamily: 'Pretendard-Bold',
+        textShadowColor: 'rgba(0, 184, 184, 0.4)',
+        textShadowOffset: { width: 0, height: 0 },
+        textShadowRadius: 8,
+    },
+
+    // Premium Hero Card
+    heroCard: {
+        width: '90%',
+        aspectRatio: 1.2,
+        marginTop: 20,
+        marginBottom: 60, // Space for FAB overhang
+        borderRadius: 24,
+        overflow: 'visible', // Allow FAB to overflow
+        elevation: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+    },
+    heroCardBg: {
+        flex: 1,
+        width: '100%',
+        height: '100%',
+        borderRadius: 24,
+        overflow: 'hidden',
+    },
+    heroCardBgImage: {
+        borderRadius: 24,
+    },
+    heroCardOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 100, 100, 0.35)',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        paddingBottom: 60,
+    },
+    cameraIcon: {
+        marginBottom: 20,
+        transform: [{ scaleX: -1 }],
+    },
+    heroSubtext: {
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 20,
+        color: '#FFFFFF',
+        textAlign: 'center',
+        textShadowColor: 'rgba(0, 0, 0, 0.3)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 4,
+    },
+    voiceFab: {
+        position: 'absolute',
+        bottom: -24,
+        alignSelf: 'center',
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        paddingVertical: 14,
+        paddingHorizontal: 28,
+        borderRadius: 28,
+        gap: 10,
+        elevation: 6,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+    },
+    voiceFabText: {
+        fontFamily: 'Pretendard-Bold',
+        fontSize: 16,
+        color: Colors.orange,
     },
 
     // Quick Links
