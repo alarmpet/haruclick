@@ -8,6 +8,7 @@ import { Alert } from 'react-native';
 export type AuthResult = {
     success: boolean;
     error?: string;
+    needsEmailConfirmation?: boolean;
 };
 
 /** Email/Password login */
@@ -66,7 +67,35 @@ export async function logout(): Promise<AuthResult> {
 /** Sign‑up (email/password) */
 export async function signUp(email: string, password: string): Promise<AuthResult> {
     try {
-        const { error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+                emailRedirectTo: 'haruclick://login-callback'
+            }
+        });
+        if (error) return { success: false, error: error.message };
+
+        return {
+            success: true,
+            needsEmailConfirmation: !data.session
+        };
+    } catch (e: any) {
+        return { success: false, error: e.message };
+    }
+}
+
+/** Resend Verification Email */
+export async function resendVerificationEmail(email: string): Promise<AuthResult> {
+    try {
+        const { error } = await supabase.auth.resend({
+            type: 'signup',
+            email: email,
+            options: {
+                emailRedirectTo: 'haruclick://login-callback'
+            }
+        });
+
         if (error) return { success: false, error: error.message };
         return { success: true };
     } catch (e: any) {

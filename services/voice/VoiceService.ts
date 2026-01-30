@@ -82,6 +82,7 @@ class VoiceService {
         } catch { }
 
         this.state = 'IDLE';
+        this.listeners?.onStateChange('IDLE'); // ✅ UI에 상태 변경 알림
         // Voice.destroy() 호출하지 않음 - 재사용 가능하도록 유지
     }
 
@@ -92,6 +93,22 @@ class VoiceService {
         this.stopLocalSTT();
         Voice.destroy().then(Voice.removeAllListeners);
         this.listeners = null;
+    }
+
+    // Force reset: 화면 진입 시 강제 상태 초기화
+    async forceReset() {
+        console.log('[VoiceService] Force reset initiated');
+        this.invalidateLocalSession();
+        this.startInProgress = false;
+        this.cleanupInProgress = false;
+        this.cleanupPromise = null;
+
+        try { await Voice.stop(); } catch { }
+        try { await Voice.cancel(); } catch { }
+        await this.stopWhisperRecording();
+
+        this.state = 'IDLE';
+        this.listeners?.onStateChange('IDLE');
     }
 
     private invalidateLocalSession() {

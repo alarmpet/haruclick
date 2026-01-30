@@ -87,6 +87,16 @@ const PAY_APPS = [
     },
 ];
 
+// ✅ 알림 옵션 (AddEventModal과 동일)
+const ALARM_OPTIONS = [
+    { label: '알림 없음', value: null },
+    { label: '정시', value: 0 },
+    { label: '10분 전', value: 10 },
+    { label: '30분 전', value: 30 },
+    { label: '1시간 전', value: 60 },
+    { label: '1일 전', value: 1440 },
+];
+
 const stableStringify = (value: any): string => {
     if (Array.isArray(value)) {
         return `[${value.map(stableStringify).join(',')}]`;
@@ -158,6 +168,28 @@ export default function SmartScanResultScreen() {
     const [inputModalVisible, setInputModalVisible] = useState(false);
     const [inputText, setInputText] = useState('');
 
+    // ✅ 알림 설정 상태 (항목별 관리, 기본값: 60분 전)
+    const [alarmByIndex, setAlarmByIndex] = useState<Record<number, number | null>>({});
+    const [alarmModalVisible, setAlarmModalVisible] = useState(false);
+    const [alarmTargetIndex, setAlarmTargetIndex] = useState<number | null>(null);
+
+    // ✅ 알림 모달 열기
+    const openAlarmModal = (index: number) => {
+        setAlarmTargetIndex(index);
+        setAlarmModalVisible(true);
+    };
+
+    // ✅ 알림 선택 핸들러
+    const handleAlarmSelect = (minutes: number | null) => {
+        if (alarmTargetIndex === null) return;
+        setAlarmByIndex(prev => ({
+            ...prev,
+            [alarmTargetIndex]: minutes
+        }));
+        setAlarmModalVisible(false);
+        setAlarmTargetIndex(null);
+    };
+
     useFocusEffect(
         useCallback(() => {
             const loadData = async () => {
@@ -196,13 +228,24 @@ export default function SmartScanResultScreen() {
                         .map(({ i }) => i);
                     setSelectedIndices(new Set(validIndices));
 
+                    // ✅ 알림 기본값 설정 (APPOINTMENT/INVITATION만 60분 전)
+                    const alarmDefaults: Record<number, number | null> = {};
+                    loadedList.forEach((item, i) => {
+                        if (item.type === 'APPOINTMENT' || item.type === 'INVITATION') {
+                            alarmDefaults[i] = 60; // 1시간 전
+                        } else {
+                            alarmDefaults[i] = null;
+                        }
+                    });
+                    setAlarmByIndex(alarmDefaults);
+
                     // 첫 번째가 INVITATION이면 추천 로직 실행
                     const firstItem = loadedList[0];
                     if (firstItem.type === 'INVITATION') {
                         const invite = firstItem as InvitationResult;
                         const result = RecommendationEngine.recommend(
                             invite.eventType || 'wedding',
-                            '친한 친구',
+                            invite.relation || '지인',
                             true,
                             invite.eventLocation
                         );
@@ -523,16 +566,19 @@ export default function SmartScanResultScreen() {
             console.log(`[일괄 저장] ${selectedItems.length}건 저장 시작`);
 
             for (const item of selectedItems) {
+                const itemIndex = dataList.indexOf(item);
                 // INVITATION인 경우 사용자 선택 정보 반영
                 if (item.type === 'INVITATION' && selectedRelation) {
                     const invite = item as InvitationResult;
                     invite.relation = selectedRelation;
                     if (recommendation) {
-                        invite.recommendedAmount = recommendation.recommendedAmount;
                         invite.recommendationReason = recommendation.reason;
                     }
                 }
-                await saveUnifiedEvent(item, imageUri as string);
+                // ✅ 알림 옵션 전달
+                await saveUnifiedEvent(item, imageUri as string, {
+                    alarmMinutes: alarmByIndex[itemIndex] ?? undefined
+                });
             }
 
             const corrections = buildCorrections();
@@ -1005,15 +1051,39 @@ export default function SmartScanResultScreen() {
                         <View style={styles.card}>
                             <View style={styles.headerRow}>
                                 <Ionicons name="mail-open-outline" size={24} color={Colors.navy} />
-                                <Text style={styles.cardTitle}>초대장 분석 결과</Text>
+                                <Text style={styles.cardTitle}>{eventType === 'funeral' ? '부고장 분석 결과' : '초대장 분석 결과'}</Text>
                             </View>
                             <View style={styles.divider} />
 
                             <InfoRow label="행사 종류" value={eventType || '알 수 없음'} />
                             <InfoRow label="일시" value={formatDisplayDateTime(invite.eventDate) || '날짜 없음'} />
                             <InfoRow label="장소" value={invite.eventLocation || '장소 정보 없음'} />
-                            <InfoRow label="주인공" value={invite.mainName || '-'} />
+                            <InfoRow label={eventType === 'funeral' ? '고인' : '주인공'} value={invite.mainName || '-'} />
                             <InfoRow label="초대자" value={invite.senderName || '-'} />
+
+                            {/* ✅ 알림 선택 */}
+                            <View style={styles.infoRow}>
+                                <Text style={styles.infoLabel}>알림</Text>
+                                <TouchableOpacity
+                                    style={styles.categorySelect}
+                                    onPress={() => openAlarmModal(editingIndex !== null ? editingIndex : 0)}
+                                >
+                                    <Text style={styles.categorySelectText}>
+                                        {ALARM_OPTIONS.find(opt => opt.value === (alarmByIndex[editingIndex !== null ? editingIndex : 0] ?? null))?.label || '알림 없음'}
+                                    </Text>
+                                    <Ionicons name="notifications-outline" size={16} color={Colors.subText} />
+                                </TouchableOpacity>
+                            </View>
+
+                            {/* ✅ 금액 입력 필드 추가 (기본값 문제를 해결하기 위해 사용자가 직접 확인) */}
+                            <EditableRow
+                                label="금액 (지출 예정)"
+                                value={String(invite.recommendedAmount || 0)}
+                                keyboardType="numeric"
+                                onChangeText={(text) => handleUpdateData('recommendedAmount', parseInt(text.replace(/[^0-9]/g, '') || '0', 10))}
+                                isCurrency
+                                placeholder="0"
+                            />
 
                             {invite.accountNumber ? (
                                 <View style={styles.accountBox}>
@@ -1578,7 +1648,19 @@ export default function SmartScanResultScreen() {
                                 <Text style={styles.categorySelectText}>
                                     {formatDisplayDateTime(appointment.date || '') || 'YYYY-MM-DD'}
                                 </Text>
-                                <Ionicons name="calendar-outline" size={16} color={Colors.subText} />
+                            </TouchableOpacity>
+                        </View>
+                        {/* ✅ 알림 선택 */}
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>알림</Text>
+                            <TouchableOpacity
+                                style={styles.categorySelect}
+                                onPress={() => openAlarmModal(editingIndex !== null ? editingIndex : 0)}
+                            >
+                                <Text style={styles.categorySelectText}>
+                                    {ALARM_OPTIONS.find(opt => opt.value === (alarmByIndex[editingIndex !== null ? editingIndex : 0] ?? null))?.label || '알림 없음'}
+                                </Text>
+                                <Ionicons name="notifications-outline" size={16} color={Colors.subText} />
                             </TouchableOpacity>
                         </View>
                         <EditableRow
@@ -1949,6 +2031,44 @@ export default function SmartScanResultScreen() {
                     </View>
                 </KeyboardAvoidingView>
             </Modal>
+        </>
+            
+            {/* ✅ 알림 선택 모달 */ }
+    <Modal
+        visible={alarmModalVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setAlarmModalVisible(false)}
+    >
+        <TouchableOpacity
+            style={styles.categoryModalOverlay}
+            activeOpacity={1}
+            onPress={() => setAlarmModalVisible(false)}
+        >
+            <View style={[styles.categoryModalContent, { maxHeight: 400 }]}>
+                <Text style={styles.categoryModalTitle}>알림 시간 선택</Text>
+                <ScrollView>
+                    {ALARM_OPTIONS.map((opt) => (
+                        <TouchableOpacity
+                            key={opt.label}
+                            style={styles.categoryModalItem}
+                            onPress={() => handleAlarmSelect(opt.value)}
+                        >
+                            <Text style={[
+                                styles.categoryModalItemText,
+                                alarmTargetIndex !== null && alarmByIndex[alarmTargetIndex] === opt.value && { color: Colors.primary, fontFamily: 'Pretendard-Bold' }
+                            ]}>
+                                {opt.label}
+                            </Text>
+                            {alarmTargetIndex !== null && alarmByIndex[alarmTargetIndex] === opt.value && (
+                                <Ionicons name="checkmark" size={20} color={Colors.primary} />
+                            )}
+                        </TouchableOpacity>
+                    ))}
+                </ScrollView>
+            </View>
+        </TouchableOpacity>
+    </Modal>
         </>
     );
 }
@@ -2730,5 +2850,20 @@ const styles = StyleSheet.create({
         fontFamily: 'Pretendard-SemiBold',
         fontSize: 15,
         color: 'white',
+    },
+    // ✅ 알림 모달 아이템 스타일
+    categoryModalItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 16,
+        paddingHorizontal: 20,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+    },
+    categoryModalItemText: {
+        fontFamily: 'Pretendard-Medium',
+        fontSize: 16,
+        color: Colors.text,
     },
 });

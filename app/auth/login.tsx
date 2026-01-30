@@ -1,7 +1,7 @@
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ScrollView, Platform, Linking, StatusBar, KeyboardAvoidingView } from 'react-native';
 import { useState, useEffect } from 'react';
 import { useRouter, Stack, Link } from 'expo-router';
-import { loginWithEmail } from '../../services/authService';
+import { loginWithEmail, resendVerificationEmail } from '../../services/authService';
 import { supabase } from '../../services/supabase';
 import { Colors } from '../../constants/Colors';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -27,8 +27,38 @@ export default function LoginScreen() {
         }
         setLoading(true);
         const result = await loginWithEmail(email, password);
+
         if (!result.success) {
-            Alert.alert('로그인 실패', result.error ?? '알 수 없는 오류');
+            const errorMessage = result.error ?? '알 수 없는 오류';
+            // Intercept "Email not confirmed" error
+            if (errorMessage.toLowerCase().includes('email not confirmed')) {
+                Alert.alert(
+                    '이메일 인증 필요',
+                    '이메일 인증이 완료되지 않았습니다.\n\n인증 메일을 다시 받으시겠습니까?',
+                    [
+                        { text: '취소', style: 'cancel' },
+                        {
+                            text: '재전송',
+                            onPress: async () => {
+                                setLoading(true);
+                                const resendResult = await resendVerificationEmail(email);
+                                setLoading(false);
+
+                                if (resendResult.success) {
+                                    Alert.alert(
+                                        '발송 완료',
+                                        `${email}로 인증 메일이 재전송되었습니다.\n\n이메일을 확인해주세요.`
+                                    );
+                                } else {
+                                    Alert.alert('오류', resendResult.error ?? '재전송 실패');
+                                }
+                            }
+                        }
+                    ]
+                );
+            } else {
+                Alert.alert('로그인 실패', errorMessage);
+            }
         }
         setLoading(false);
     };

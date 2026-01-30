@@ -1,10 +1,19 @@
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Pressable } from 'react-native';
 import { Colors } from '../constants/Colors';
 import { Card } from './Card';
-import React, { memo, useCallback, useMemo, useState } from 'react';
+import React, { memo, useCallback, useMemo, useState, useEffect } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { getUpcomingEvents, updateEvent, deleteEvent, deleteLedgerItem, deleteBankTransaction, EventRecord } from '../services/supabase';
 import { Ionicons } from '@expo/vector-icons';
+
+const PAYMENT_TAG = '[송금완료]';
+const PAYMENT_TAG_REGEX = /\[송금완료\]\s*/g;
+
+const buildPaymentMemo = (memo: string, isPaid: boolean) => {
+    const base = (memo || '').replace(PAYMENT_TAG_REGEX, '').trim();
+    if (!isPaid) return base;
+    return `${PAYMENT_TAG}${base ? ` ${base}` : ''}`;
+};
 
 interface EventTimelineProps {
     events?: EventRecord[];
@@ -17,10 +26,40 @@ interface EventTimelineProps {
 export const EventTimeline = memo(function EventTimeline({ events: propEvents, title, onEventsChange, onEventPress, onEventEdit }: EventTimelineProps) {
     const router = useRouter();
     const [stateEvents, setStateEvents] = useState<EventRecord[]>([]);
+    const [localEvents, setLocalEvents] = useState<EventRecord[]>([]);
+    const [pendingUpdates, setPendingUpdates] = useState<Record<string, { isPaid: boolean; memo: string }>>({});
     const [loading, setLoading] = useState(propEvents === undefined);
 
     const isControlled = propEvents !== undefined;
-    const events = isControlled ? propEvents : stateEvents;
+    const events = isControlled ? localEvents : stateEvents;
+
+    // Sync props to local state for optimistic updates
+    useEffect(() => {
+        if (!propEvents) return;
+
+        let didClear = false;
+        const nextPending = { ...pendingUpdates };
+
+        const merged = propEvents.map(event => {
+            const pending = nextPending[event.id];
+            if (!pending) return event;
+
+            const eventMemo = event.memo ?? '';
+            const isSynced = eventMemo === pending.memo && event.isPaid === pending.isPaid;
+            if (isSynced) {
+                delete nextPending[event.id];
+                didClear = true;
+                return event;
+            }
+
+            return { ...event, ...pending };
+        });
+
+        setLocalEvents(merged);
+        if (didClear) {
+            setPendingUpdates(nextPending);
+        }
+    }, [propEvents, pendingUpdates]);
 
     const fetchEvents = useCallback(async () => {
         if (isControlled) return;
@@ -38,18 +77,21 @@ export const EventTimeline = memo(function EventTimeline({ events: propEvents, t
 
     // ✅ 송금 완료 상태 토글 (메모에 [송금완료] 태그 추가/제거)
     const togglePayment = useCallback(async (event: EventRecord) => {
-        const newStatus = !event.isPaid;
+        const currentEvent = events.find(e => e.id === event.id) ?? event;
+        const newStatus = !currentEvent.isPaid;
+        const newMemo = buildPaymentMemo(currentEvent.memo || '', newStatus);
 
-        // Optimistic UI Update (Only for local state)
-        if (!isControlled) {
-            setStateEvents(prev => prev.map(e => e.id === event.id ? { ...e, isPaid: newStatus } : e));
-        }
+        const updateFn = (prev: EventRecord[]) =>
+            prev.map(e => (e.id === event.id ? { ...e, isPaid: newStatus, memo: newMemo } : e));
 
-        let newMemo = event.memo || '';
-        if (newStatus) {
-            if (!newMemo.includes('[송금완료]')) newMemo = `[송금완료] ${newMemo}`;
+        if (isControlled) {
+            setLocalEvents(updateFn);
+            setPendingUpdates(prev => ({
+                ...prev,
+                [event.id]: { isPaid: newStatus, memo: newMemo }
+            }));
         } else {
-            newMemo = newMemo.replace('[송금완료]', '').trim();
+            setStateEvents(updateFn);
         }
 
         try {
@@ -60,9 +102,24 @@ export const EventTimeline = memo(function EventTimeline({ events: propEvents, t
         } catch (e) {
             console.error(e);
             Alert.alert('오류', '상태 업데이트에 실패했습니다.');
-            if (!isControlled) fetchEvents(); // Revert on error
+            if (isControlled) {
+                setPendingUpdates(prev => {
+                    const next = { ...prev };
+                    delete next[event.id];
+                    return next;
+                });
+                setLocalEvents(prev =>
+                    prev.map(e => (e.id === event.id ? currentEvent : e))
+                );
+                if (onEventsChange) onEventsChange();
+            } else {
+                setStateEvents(prev =>
+                    prev.map(e => (e.id === event.id ? currentEvent : e))
+                );
+                fetchEvents();
+            }
         }
-    }, [fetchEvents, isControlled, onEventsChange]);
+    }, [events, fetchEvents, isControlled, onEventsChange]);
 
     // ✅ 일정 삭제
     const handleDelete = useCallback((event: EventRecord) => {
@@ -234,7 +291,7 @@ export const EventTimeline = memo(function EventTimeline({ events: propEvents, t
                                         </View>
 
                                         <View style={styles.titleRow}>
-                                            <Text style={styles.eventTitle}>
+                                            <Text style={[styles.eventTitle, { flex: 1, marginRight: 8 }]} numberOfLines={1} ellipsizeMode="tail">
                                                 {event.name}
                                                 {event.location && (
                                                     <Text style={{ color: Colors.subText, fontSize: 13, fontFamily: 'Pretendard-Regular' }}>
@@ -245,9 +302,13 @@ export const EventTimeline = memo(function EventTimeline({ events: propEvents, t
 
                                             {/* ✅ 송금 완료 체크박스 - 경조사(wedding, funeral, birthday)일 때만 표시 */}
                                             {!event.isReceived && ['wedding', 'funeral', 'birthday'].includes(event.type) && (
-                                                <TouchableOpacity
+                                                <Pressable
                                                     style={[styles.checkButton, event.isPaid && styles.checkedButton]}
-                                                    onPress={() => togglePayment(event)}
+                                                    onPress={(e) => {
+                                                        e?.stopPropagation?.();
+                                                        togglePayment(event);
+                                                    }}
+                                                    hitSlop={8}
                                                 >
                                                     <Ionicons
                                                         name={event.isPaid ? "checkmark-circle" : "ellipse-outline"}
@@ -257,7 +318,7 @@ export const EventTimeline = memo(function EventTimeline({ events: propEvents, t
                                                     <Text style={[styles.checkText, event.isPaid && styles.checkedText]}>
                                                         {event.isPaid ? '송금완료' : '송금예정'}
                                                     </Text>
-                                                </TouchableOpacity>
+                                                </Pressable>
                                             )}
                                         </View>
 
@@ -478,6 +539,9 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: Colors.border,
         gap: 4,
+        flexShrink: 0,
+        minWidth: 80,
+        justifyContent: 'center',
     },
     checkedButton: {
         backgroundColor: Colors.orange,

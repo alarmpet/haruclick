@@ -344,6 +344,12 @@ EXTRACTION RULES
   * Prefer "funeral" if: 장례, 부고, 빈소, 발인
   * Prefer "birthday" if: 생일, 돌잔치, 첫돌, 환갑
 
+- OBITUARY/FUNERAL EXCEPTION (CRITICAL):
+  * Obituary text usually contains multiple dates (입실, 입관, 발인).
+  * You MUST merge them into a SINGLE transaction. Do NOT split into multiple items.
+  * Use '입실' (Visitation) date as the primary 'date_or_datetime'.
+  * Extract the main person (고인) name and funeral location (장례식장) from the text.
+
 ⚠️ KOREAN CONTEXT RULES (한국 맥락 기반 분류):
 
 【분류 충돌 해소 원칙】
@@ -442,6 +448,7 @@ If no label exists, follow the previous Contextual Anchor logic (check nearby bl
 
 If OCR text contains multiple messages or transactions,
 you MUST segment them into logical message blocks.
+**EXCEPTION**: If the text is an OBITUARY/FUNERAL (w/ words like 부고, 빈소, 발인), do NOT segment based on dates. Treat it as a SINGLE event.
 
 Each block may have:
 - its own explicit date (ANCHOR)
@@ -457,6 +464,12 @@ you MUST output the final resolved date as an absolute date
 in ISO format (YYYY-MM-DD or YYYY-MM-DD HH:mm).
 
 Do NOT output relative expressions.
+
+⚠️ FINAL OVERRIDE FOR FUNERALS:
+If you detect '장례', '부고', '빈소', '발인':
+1. IGNORE the rule about splitting blocks by date.
+2. FORCE the output to be a SINGLE transaction.
+3. Select '입실' (Visitation) date as the event date. If missing, use '빈소' date.
 
 CATEGORY GUIDE
 CATEGORIES CONFIGURATION

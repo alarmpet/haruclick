@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated, Pressable, RefreshControl, ImageBackground, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Pressable, RefreshControl, ImageBackground } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Colors } from '../constants/Colors';
 import { useRouter } from 'expo-router';
@@ -26,24 +26,7 @@ export default function Home() {
     const [upcomingEvents, setUpcomingEvents] = useState<EventRecord[]>([]);
     const [refreshing, setRefreshing] = useState(false);
 
-    // 버튼 press 애니메이션
-    const scaleValue = useRef(new Animated.Value(1)).current;
 
-    const handlePressIn = () => {
-        Animated.spring(scaleValue, {
-            toValue: 0.92,
-            useNativeDriver: true,
-        }).start();
-    };
-
-    const handlePressOut = () => {
-        Animated.spring(scaleValue, {
-            toValue: 1,
-            friction: 3,
-            tension: 40,
-            useNativeDriver: true,
-        }).start();
-    };
 
     const handleScanPress = async () => {
         try {
@@ -54,17 +37,17 @@ export default function Home() {
         router.push('/scan/universal');
     };
 
-    // D-Day 계산 (하루 단위 캐시)
+    // D-Day 계산 (하루 단위 캐시 - useRef로 리렌더 시에도 유지)
+    const ddayCache = useRef(new Map<string, string>()).current;
     const todayKey = new Date().toISOString().split('T')[0];
     const getDDay = useMemo(() => {
-        const cache = new Map<string, string>();
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const todayMs = today.getTime();
 
         return (dateStr: string) => {
             const cacheKey = `${todayKey}:${dateStr}`;
-            const cached = cache.get(cacheKey);
+            const cached = ddayCache.get(cacheKey);
             if (cached) return cached;
 
             const eventDate = new Date(dateStr);
@@ -77,7 +60,7 @@ export default function Home() {
             else if (diffDays < 0) result = `D + ${Math.abs(diffDays)} `;
             else result = `D - ${diffDays} `;
 
-            cache.set(cacheKey, result);
+            ddayCache.set(cacheKey, result);
             return result;
         };
     }, [todayKey]);
@@ -153,20 +136,7 @@ export default function Home() {
         setRefreshing(false);
     };
 
-    const getRippleStyle = useCallback((anim: Animated.Value) => ({
-        transform: [
-            {
-                scale: anim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [1, 1.7], // Gentle expansion
-                }),
-            },
-        ],
-        opacity: anim.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0.2, 0], // Single direction fade out
-        }),
-    }), []);
+
 
     return (
         <>

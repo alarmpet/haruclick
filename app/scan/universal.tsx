@@ -133,7 +133,9 @@ export default function UniversalScannerScreen() {
 
             // Auto-start Voice if in Voice Mode
             if (isVoiceMode) {
-                initVoiceSessionRef.current();
+                voiceService.forceReset().then(() => {
+                    initVoiceSessionRef.current();
+                }).catch(() => { });
             }
 
             return () => {
@@ -171,7 +173,10 @@ export default function UniversalScannerScreen() {
         // 🔧 ALWAYS attach listeners first (connects UI to VoiceService)
         // This ensures new component gets listeners even if debounced
         voiceService.setListeners({
-            onStateChange: (state) => setVoiceState(state),
+            onStateChange: (state) => {
+                voiceStateRef.current = state; // ✅ 동기 업데이트 (핵심 수정)
+                setVoiceState(state);
+            },
             onLocalResult: (text, isFinal) => {
                 setVoiceText(text);
                 clearFinalizeTimeout();
@@ -222,8 +227,8 @@ export default function UniversalScannerScreen() {
             }
         });
 
-        // 🔧 Guard 1: Debounce (2초 이내 중복 호출 방지)
-        if (Date.now() - lastInitTimeRef.current < 2000) {
+        // 🔧 Guard 1: Debounce (500ms 이내 중복 호출 방지)
+        if (Date.now() - lastInitTimeRef.current < 500) {
             console.log('[Voice] initVoiceSession debounced (listeners updated)');
             return;
         }

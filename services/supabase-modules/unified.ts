@@ -85,6 +85,8 @@ export async function saveUnifiedEvent(
         startTime?: string;
         endTime?: string;
         isAllDay?: boolean;
+        categoryGroup?: CategoryGroupType;
+        isReceived?: boolean;
     }
 ): Promise<void> {
     console.log('[saveUnifiedEvent] Function start', options);
@@ -143,6 +145,16 @@ export async function saveUnifiedEvent(
             });
 
             if (error) throw error;
+
+            // ✅ APPOINTMENT 알림 스케줄링 (0 포함)
+            if (options?.alarmMinutes != null) {
+                await scheduleEventNotification(
+                    appointment.title || '일정',
+                    safeEventDate,
+                    resolvedStartTime ?? undefined,
+                    options.alarmMinutes
+                );
+            }
         } else if (data.type === 'INVITATION') {
             const invite = data as InvitationResult;
             console.log('[saveUnifiedEvent] INVITATION Save start:', JSON.stringify({
@@ -207,7 +219,7 @@ export async function saveUnifiedEvent(
                     is_received: false,
                     recurrence_rule: options?.recurrence || null,
                     group_id: groupId,
-                    alarm_minutes: options?.alarmMinutes || null,
+                    alarm_minutes: options?.alarmMinutes ?? null,
                     start_time: resolvedStartTime,
                     end_time: resolvedEndTime,
                     is_all_day: options?.isAllDay ?? false
@@ -222,7 +234,7 @@ export async function saveUnifiedEvent(
                 }
 
                 // Schedule alarm (Limit to 20)
-                if (options?.alarmMinutes && i < 20) {
+                if (options?.alarmMinutes != null && i < 20) {
                     await scheduleEventNotification(
                         invite.senderName || invite.mainName || '일정',
                         currentDateStr,

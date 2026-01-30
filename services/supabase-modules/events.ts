@@ -80,7 +80,7 @@ export async function getUpcomingEvents(limit = 2): Promise<EventRecord[]> {
                 amount: item.amount,
                 isReceived: item.is_received,
                 memo: item.memo,
-                isPaid: item.memo?.includes('[????]') || false,
+                isPaid: item.memo?.includes('[송금완료]') || false,
                 isCompleted: false, // item.is_completed (Column missing)
                 startTime: item.start_time,
                 endTime: item.end_time,
@@ -184,10 +184,16 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
             source: 'bank_transactions' as const,
         }));
 
-        // ????? ??
-        return [...eventRecords, ...ledgerRecords, ...bankRecords].sort((a, b) =>
-            new Date(a.date).getTime() - new Date(b.date).getTime()
-        );
+        // 날짜+시간 기준 정렬
+        return [...eventRecords, ...ledgerRecords, ...bankRecords].sort((a, b) => {
+            const dateCompare = new Date(a.date).getTime() - new Date(b.date).getTime();
+            if (dateCompare !== 0) return dateCompare;
+
+            // 날짜가 같으면 시간으로 정렬
+            const timeA = a.startTime || '00:00:00';
+            const timeB = b.startTime || '00:00:00';
+            return timeA.localeCompare(timeB);
+        });
     });
 }
 
@@ -267,7 +273,7 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
             amount: item.amount,
             isReceived: item.is_received,
             memo: item.memo,
-            isPaid: item.memo?.includes('[????]') || false,
+            isPaid: item.memo?.includes('[송금완료]') || false,
             startTime: item.start_time || undefined,
             endTime: item.end_time || undefined,
             location: item.location,
@@ -302,9 +308,16 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
             source: 'bank_transactions' as const,
         }));
 
-        return [...eventRecords, ...ledgerRecords, ...bankRecords].sort((a, b) =>
-            new Date(a.date).getTime() - new Date(b.date).getTime()
-        );
+        // 날짜+시간 기준 정렬
+        return [...eventRecords, ...ledgerRecords, ...bankRecords].sort((a, b) => {
+            const dateCompare = new Date(a.date).getTime() - new Date(b.date).getTime();
+            if (dateCompare !== 0) return dateCompare;
+
+            // 날짜가 같으면 시간으로 정렬
+            const timeA = a.startTime || '00:00:00';
+            const timeB = b.startTime || '00:00:00';
+            return timeA.localeCompare(timeB);
+        });
     });
 }
 

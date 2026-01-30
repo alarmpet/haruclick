@@ -2,7 +2,7 @@ import { Tabs, useRouter, useSegments } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState, useRef } from 'react';
-import { View, Text, Linking, Platform } from 'react-native';
+import { View, Text, Linking, Platform, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../services/supabase';
 import { Colors } from '../constants/Colors';
@@ -34,6 +34,7 @@ const handleDeepLink = async (url: string) => {
             if (params) {
                 const access_token = params.get('access_token');
                 const refresh_token = params.get('refresh_token');
+                const type = params.get('type');
 
                 if (access_token && refresh_token) {
                     console.log('Setting session from deep link...');
@@ -46,6 +47,17 @@ const handleDeepLink = async (url: string) => {
                         console.log('setSession error:', error);
                     } else {
                         console.log('Session set successfully!');
+
+                        // Show welcome message for first-time email confirmation
+                        if (type === 'signup') {
+                            setTimeout(() => {
+                                Alert.alert(
+                                    '환영합니다! 🎉',
+                                    '이메일 인증이 완료되었습니다.\n하루클릭을 시작해보세요!',
+                                    [{ text: '시작하기' }]
+                                );
+                            }, 500);
+                        }
                     }
                 }
             }
@@ -213,12 +225,12 @@ export default function RootLayout() {
         // Notification Listener
         const subscription = Notifications.addNotificationResponseReceivedListener(response => {
             const title = response.notification.request.content.title;
-                if (title && title.includes('보답')) {
-                    setTimeout(() => {
-                        router.push('/relationship-ledger');
-                    }, 500);
-                }
-            });
+            if (title && title.includes('보답')) {
+                setTimeout(() => {
+                    router.push('/relationship-ledger');
+                }, 500);
+            }
+        });
 
         return () => {
             linkingListener.remove();
@@ -377,6 +389,7 @@ export default function RootLayout() {
                             href: null,
                         }}
                     />
+
                     {/* Auth routes hidden */}
                     <Tabs.Screen
                         name="auth/login"
@@ -399,6 +412,14 @@ export default function RootLayout() {
                             tabBarStyle: { display: 'none' }
                         }}
                     />
+                    <Tabs.Screen
+                        name="auth/verify-email"
+                        options={{
+                            href: null,
+                            tabBarStyle: { display: 'none' }
+                        }}
+                    />
+
                     {/* Login Callback hidden */}
                     <Tabs.Screen
                         name="login-callback"
@@ -407,6 +428,7 @@ export default function RootLayout() {
                             tabBarStyle: { display: 'none' }
                         }}
                     />
+
                     {/* Settings subpages hidden */}
                     <Tabs.Screen
                         name="settings/customer-support/index"

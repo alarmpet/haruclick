@@ -80,6 +80,12 @@ const getEndHour = (startTime: string) => {
     return nextHour.toString().padStart(2, '0') + ':00';
 };
 
+// ✅ 시간 포맷 정규화 (15:00:00 -> 15:00)
+const formatTimeHHMM = (time?: string): string => {
+    if (!time) return '09:00';
+    return time.length > 5 ? time.substring(0, 5) : time;
+};
+
 export function AddEventModal({ visible, onClose, onSaved, initialDate, initialCategory = 'schedule', editEvent }: AddEventModalProps) {
     const { colors, isDark } = useTheme();
     const [category, setCategory] = useState<'ceremony' | 'todo' | 'schedule' | 'expense'>(initialCategory);
@@ -163,11 +169,11 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
 
                 // Time fields
                 if (editEvent.start_time || editEvent.startTime) {
-                    setStartTime(editEvent.start_time || editEvent.startTime);
+                    setStartTime(formatTimeHHMM(editEvent.start_time || editEvent.startTime));
                     setIsAllDay(false);
                 }
                 if (editEvent.end_time || editEvent.endTime) {
-                    setEndTime(editEvent.end_time || editEvent.endTime);
+                    setEndTime(formatTimeHHMM(editEvent.end_time || editEvent.endTime));
                 }
 
                 // Ledger fields
@@ -468,7 +474,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             </View>
 
             {/* 이름 */}
-            <Text style={[styles.label, { color: colors.subText }]}>👤 이름 (주인공)</Text>
+            <Text style={[styles.label, { color: colors.subText }]}>👤 이름 ({ceremonyType === 'funeral' ? '고인' : '주인공'})</Text>
             <TextInput
                 style={[styles.input, { backgroundColor: colors.card, color: colors.text }]}
                 placeholder="예: 홍길동"
@@ -597,7 +603,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             {/* 종일 토글 */}
             <View style={styles.row}>
                 <Ionicons name="time-outline" size={24} color="#888" />
-                <Text style={styles.rowText}>종일</Text>
+                <Text style={[styles.rowText, { color: colors.text }]}>종일</Text>
                 <Switch
                     value={isAllDay}
                     onValueChange={setIsAllDay}
@@ -624,7 +630,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             {/* 반복 */}
             <TouchableOpacity style={styles.row} onPress={handleRecurrencePress}>
                 <Ionicons name="repeat-outline" size={24} color={recurrence !== 'none' ? "#5B7FBF" : "#888"} />
-                <Text style={[styles.rowText, recurrence !== 'none' && { color: '#5B7FBF' }]}>
+                <Text style={[styles.rowText, { color: recurrence !== 'none' ? '#5B7FBF' : colors.text }]}>
                     {recurrenceOptions.find(r => r.value === recurrence)?.label || '반복 안함'}
                 </Text>
             </TouchableOpacity>
@@ -633,7 +639,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             {category === 'todo' && (
                 <TouchableOpacity style={styles.row}>
                     <Ionicons name="checkmark-circle-outline" size={24} color="#888" />
-                    <Text style={styles.rowText}>마감일 추가</Text>
+                    <Text style={[styles.rowText, { color: colors.text }]}>마감일 추가</Text>
                 </TouchableOpacity>
             )}
 
@@ -652,7 +658,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             {/* 알림 */}
             <TouchableOpacity style={styles.row} onPress={handleAlarmPress}>
                 <Ionicons name="notifications-outline" size={24} color={selectedAlarm !== null ? "#5B7FBF" : "#888"} />
-                <Text style={[styles.rowText, selectedAlarm !== null && { color: '#5B7FBF' }]}>
+                <Text style={[styles.rowText, { color: selectedAlarm !== null ? '#5B7FBF' : colors.text }]}>
                     {alarmOptions.find(a => a.value === selectedAlarm)?.label || '알림 없음'}
                 </Text>
             </TouchableOpacity>
@@ -661,7 +667,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             <View style={styles.row}>
                 <Ionicons name="menu-outline" size={24} color="#888" />
                 <TextInput
-                    style={styles.locationInput}
+                    style={[styles.locationInput, { color: colors.text }]}
                     placeholder="세부정보 추가"
                     placeholderTextColor="#888"
                     value={memo}

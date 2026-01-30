@@ -2,6 +2,7 @@ import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ScrollView,
 import { useState, useMemo } from 'react';
 import { useRouter, Stack, Link } from 'expo-router';
 import { supabase } from '../../services/supabase';
+import { signUp } from '../../services/authService';
 import { Colors } from '../../constants/Colors';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
@@ -56,14 +57,24 @@ export default function SignupScreen() {
         }
 
         setLoading(true);
-        const { error } = await supabase.auth.signUp({ email, password });
+        // Use the wrapper from authService that handles emailRedirectTo
+        const { success, error, needsEmailConfirmation } = await signUp(email, password);
 
-        if (error) {
-            Alert.alert('회원가입 실패', error.message);
+        if (!success) {
+            Alert.alert('회원가입 실패', error ?? '알 수 없는 오류가 발생했습니다.');
         } else {
-            Alert.alert('회원가입 성공', '회원가입이 완료되었습니다. 로그인해주세요.', [
-                { text: '확인', onPress: () => router.replace('/auth/login') }
-            ]);
+            if (needsEmailConfirmation) {
+                // Explicitly inform about email verification
+                Alert.alert(
+                    '인증 메일 발송 완료',
+                    `${email}로 인증 메일이 발송되었습니다.\n\n이메일함을 확인하여 인증 링크를 클릭해주세요.\n\n※ 스팸함도 확인해주세요.`,
+                    [{ text: '확인', onPress: () => router.replace('/auth/login') }]
+                );
+            } else {
+                Alert.alert('회원가입 성공', '회원가입이 완료되었습니다. 로그인해주세요.', [
+                    { text: '확인', onPress: () => router.replace('/auth/login') }
+                ]);
+            }
         }
         setLoading(false);
     };
