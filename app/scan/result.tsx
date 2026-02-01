@@ -2031,44 +2031,44 @@ export default function SmartScanResultScreen() {
                     </View>
                 </KeyboardAvoidingView>
             </Modal>
-        </>
-            
-            {/* ✅ 알림 선택 모달 */ }
-    <Modal
-        visible={alarmModalVisible}
-        animationType="fade"
-        transparent={true}
-        onRequestClose={() => setAlarmModalVisible(false)}
-    >
-        <TouchableOpacity
-            style={styles.categoryModalOverlay}
-            activeOpacity={1}
-            onPress={() => setAlarmModalVisible(false)}
-        >
-            <View style={[styles.categoryModalContent, { maxHeight: 400 }]}>
-                <Text style={styles.categoryModalTitle}>알림 시간 선택</Text>
-                <ScrollView>
-                    {ALARM_OPTIONS.map((opt) => (
-                        <TouchableOpacity
-                            key={opt.label}
-                            style={styles.categoryModalItem}
-                            onPress={() => handleAlarmSelect(opt.value)}
-                        >
-                            <Text style={[
-                                styles.categoryModalItemText,
-                                alarmTargetIndex !== null && alarmByIndex[alarmTargetIndex] === opt.value && { color: Colors.primary, fontFamily: 'Pretendard-Bold' }
-                            ]}>
-                                {opt.label}
-                            </Text>
-                            {alarmTargetIndex !== null && alarmByIndex[alarmTargetIndex] === opt.value && (
-                                <Ionicons name="checkmark" size={20} color={Colors.primary} />
-                            )}
-                        </TouchableOpacity>
-                    ))}
-                </ScrollView>
-            </View>
-        </TouchableOpacity>
-    </Modal>
+
+
+            {/* ✅ 알림 선택 모달 */}
+            <Modal
+                visible={alarmModalVisible}
+                animationType="fade"
+                transparent={true}
+                onRequestClose={() => setAlarmModalVisible(false)}
+            >
+                <TouchableOpacity
+                    style={styles.categoryModalOverlay}
+                    activeOpacity={1}
+                    onPress={() => setAlarmModalVisible(false)}
+                >
+                    <View style={[styles.categoryModalContent, { maxHeight: 400 }]}>
+                        <Text style={styles.categoryModalTitle}>알림 시간 선택</Text>
+                        <ScrollView>
+                            {ALARM_OPTIONS.map((opt) => (
+                                <TouchableOpacity
+                                    key={opt.label}
+                                    style={styles.categoryModalItem}
+                                    onPress={() => handleAlarmSelect(opt.value)}
+                                >
+                                    <Text style={[
+                                        styles.categoryModalItemText,
+                                        alarmTargetIndex !== null && alarmByIndex[alarmTargetIndex] === opt.value && { color: Colors.primary, fontFamily: 'Pretendard-Bold' }
+                                    ]}>
+                                        {opt.label}
+                                    </Text>
+                                    {alarmTargetIndex !== null && alarmByIndex[alarmTargetIndex] === opt.value && (
+                                        <Ionicons name="checkmark" size={20} color={Colors.primary} />
+                                    )}
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                </TouchableOpacity>
+            </Modal>
         </>
     );
 }
