@@ -193,6 +193,7 @@ export async function updateUnifiedEvent(event: EventRecord, updates: any) {
         'start_time',
         'end_time',
         'is_all_day',
+        'calendar_id', // Allow calendar change
     ]);
     const sanitizedUpdates: any = {};
     Object.keys(updates || {}).forEach((key) => {

@@ -91,6 +91,11 @@ export function invalidateUserScopedCache(prefixes: string[], userId?: string | 
     prefixes.forEach((prefix) => invalidateCache(prefix));
 }
 
+export function invalidateCalendarCache(userId: string): void {
+    // Invalidate events and upcoming events cache when calendar membership changes
+    invalidateUserScopedCache(['events_', 'upcoming_'], userId);
+}
+
 export async function testConnection() {
     try {
         const { data, error } = await supabase.from('events').select('count').limit(1);

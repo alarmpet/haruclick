@@ -40,3 +40,8 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# python / playwright artifacts
+__pycache__/
+*.pyc
+e2e/screenshots/

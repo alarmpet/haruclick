@@ -17,5 +17,10 @@ export interface EventRecord {
     location?: string; // 장소
     source: 'events' | 'ledger' | 'bank_transactions' | 'external'; // 데이터 출처 (삭제 시 사용)
     color?: string; // 캘린더 색상 (외부 일정 등)
+    // Shared Calendar Fields
+    calendar_id?: string;
+    created_by?: string;
+    calendarName?: string;
+    calendarColor?: string;
 }
 

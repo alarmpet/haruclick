@@ -133,6 +133,7 @@ export default function LoginScreen() {
                     {/* Email Input */}
                     <View style={[styles.inputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
                         <TextInput
+                            testID="login-email-input"
                             style={[styles.input, { color: colors.text }]}
                             placeholder="이메일"
                             placeholderTextColor={colors.subText}
@@ -147,6 +148,7 @@ export default function LoginScreen() {
                     {/* Password Input */}
                     <View style={[styles.inputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
                         <TextInput
+                            testID="login-password-input"
                             style={[styles.input, { color: colors.text }]}
                             placeholder="비밀번호"
                             placeholderTextColor={colors.subText}
@@ -165,6 +167,7 @@ export default function LoginScreen() {
 
                     {/* Login Button */}
                     <TouchableOpacity
+                        testID="login-submit-button"
                         style={[styles.loginButton, loading && styles.buttonDisabled, { backgroundColor: colors.primary }]}
                         onPress={handleLogin}
                         disabled={loading}

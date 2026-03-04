@@ -1061,29 +1061,7 @@ export default function SmartScanResultScreen() {
                             <InfoRow label={eventType === 'funeral' ? '고인' : '주인공'} value={invite.mainName || '-'} />
                             <InfoRow label="초대자" value={invite.senderName || '-'} />
 
-                            {/* ✅ 알림 선택 */}
-                            <View style={styles.infoRow}>
-                                <Text style={styles.infoLabel}>알림</Text>
-                                <TouchableOpacity
-                                    style={styles.categorySelect}
-                                    onPress={() => openAlarmModal(editingIndex !== null ? editingIndex : 0)}
-                                >
-                                    <Text style={styles.categorySelectText}>
-                                        {ALARM_OPTIONS.find(opt => opt.value === (alarmByIndex[editingIndex !== null ? editingIndex : 0] ?? null))?.label || '알림 없음'}
-                                    </Text>
-                                    <Ionicons name="notifications-outline" size={16} color={Colors.subText} />
-                                </TouchableOpacity>
-                            </View>
 
-                            {/* ✅ 금액 입력 필드 추가 (기본값 문제를 해결하기 위해 사용자가 직접 확인) */}
-                            <EditableRow
-                                label="금액 (지출 예정)"
-                                value={String(invite.recommendedAmount || 0)}
-                                keyboardType="numeric"
-                                onChangeText={(text) => handleUpdateData('recommendedAmount', parseInt(text.replace(/[^0-9]/g, '') || '0', 10))}
-                                isCurrency
-                                placeholder="0"
-                            />
 
                             {invite.accountNumber ? (
                                 <View style={styles.accountBox}>
@@ -1696,6 +1674,40 @@ export default function SmartScanResultScreen() {
                         <Ionicons name="people" size={20} color="white" style={{ marginRight: 8 }} />
                         <Text style={styles.pollButtonText}>익명으로 의견 물어보기</Text>
                     </TouchableOpacity>
+                )}
+
+                {/* ✅ INVITATION 전용: 금액/알림 확인 섹션 - 저장 버튼 위에 배치 */}
+                {data.type === 'INVITATION' && (
+                    <View style={[styles.card, { marginTop: 16, borderColor: colors.primary, borderWidth: 1 }]}>
+                        <View style={styles.headerRow}>
+                            <Ionicons name="checkmark-circle" size={24} color={colors.primary} />
+                            <Text style={[styles.cardTitle, { color: colors.primary }]}>최종 확인</Text>
+                        </View>
+                        <View style={styles.divider} />
+
+                        <EditableRow
+                            label="금액 (지출 예정)"
+                            value={String((data as InvitationResult).recommendedAmount || 0)}
+                            keyboardType="numeric"
+                            onChangeText={(text) => handleUpdateData('recommendedAmount', parseInt(text.replace(/[^0-9]/g, '') || '0', 10))}
+                            isCurrency
+                            placeholder="0"
+                        />
+
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>알림 설정</Text>
+                            <TouchableOpacity
+                                style={styles.categorySelect}
+                                onPress={() => openAlarmModal(editingIndex !== null ? editingIndex : 0)}
+                            >
+                                <Text style={styles.categorySelectText}>
+                                    {ALARM_OPTIONS.find(opt => opt.value === (alarmByIndex[editingIndex !== null ? editingIndex : 0] ?? null))?.label || '알림 없음'}
+                                </Text>
+                                <Ionicons name="notifications-outline" size={16} color={Colors.subText} />
+                            </TouchableOpacity>
+                        </View>
+                        <Text style={[styles.helperText, { marginTop: 8 }]}>* 이 금액과 알림 설정으로 저장됩니다.</Text>
+                    </View>
                 )}
 
                 {/* ✅ AI 면책 문구 */}

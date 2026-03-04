@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../admin-web"
+		},
+		{
+			"path": "../../review"
+		},
+		{
+			"path": "../../plan/haruclick-pptx"
+		}
+	],
+	"settings": {}
+}

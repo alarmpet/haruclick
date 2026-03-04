@@ -249,8 +249,10 @@ export default function CalendarScreen() {
         }, 5000);
 
         try {
-            console.log('[Calendar] Calling getEvents()...');
-            const data = await getEvents();
+            // Get current year and month for range-based query
+            const [year, month] = currentDate.split('-').map(Number);
+            console.log('[Calendar] Calling getEvents with range:', { year, month });
+            const data = await getEvents(year, month);
             console.log('[Calendar] getEvents returned:', data?.length);
 
             clearTimeout(timeout); // 성공하면 타임아웃 해제
@@ -722,6 +724,13 @@ export default function CalendarScreen() {
                 </View>
 
                 <View style={styles.headerRight}>
+                    <TouchableOpacity
+                        testID="calendar-open-manage-button"
+                        style={styles.headerIcon}
+                        onPress={() => router.push('/calendar/manage')}
+                    >
+                        <Ionicons name="people-outline" size={22} color={colors.text} />
+                    </TouchableOpacity>
                     <TouchableOpacity style={styles.headerIcon} onPress={() => { setSearchQuery(''); setSearchResults([]); setSearchModalVisible(true); }}>
                         <Ionicons name="search" size={22} color={colors.text} />
                     </TouchableOpacity>

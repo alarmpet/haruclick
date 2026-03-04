@@ -1,5 +1,6 @@
 import { supabase, getCached, setCache, withInflight } from './client';
 import { showError } from '../errorHandler';
+import { getMyCalendarIds } from './calendars';
 
 // Unified Definition:
 // Total Spending = Events(Paid) + Ledger(Expenses) + Bank(Withdrawals)
@@ -37,24 +38,43 @@ export async function fetchPeriodStats(startDate: string, endDate: string): Prom
         }
 
         return await withInflight(cacheKey, async () => {
+            // Get calendar IDs for filtering
+            const myCalendarIds = await getMyCalendarIds();
+
             // Parallel Fetch with Server-side Filtering
             const [
                 { data: events, error: eventError },
                 { data: ledger, error: ledgerError },
                 { data: bank, error: bankError }
             ] = await Promise.all([
-                supabase
-                    .from('events')
-                    .select('amount, type, is_received, memo, event_date')
-                    .eq('user_id', user.id)
-                    .gte('event_date', startDate)
-                    .lt('event_date', endDate),
-                supabase
-                    .from('ledger')
-                    .select('amount, category, category_group, transaction_date')
-                    .eq('user_id', user.id)
-                    .gte('transaction_date', startDate)
-                    .lt('transaction_date', endDate),
+                // Events with calendar filtering (include shared calendars)
+                myCalendarIds.length > 0
+                    ? supabase
+                        .from('events')
+                        .select('amount, type, is_received, memo, event_date')
+                        .or(`user_id.eq.${user.id},calendar_id.in.(${myCalendarIds.join(',')})`)
+                        .gte('event_date', startDate)
+                        .lt('event_date', endDate)
+                    : supabase
+                        .from('events')
+                        .select('amount, type, is_received, memo, event_date')
+                        .eq('user_id', user.id)
+                        .gte('event_date', startDate)
+                        .lt('event_date', endDate),
+                // Ledger with calendar filtering
+                myCalendarIds.length > 0
+                    ? supabase
+                        .from('ledger')
+                        .select('amount, category, category_group, transaction_date')
+                        .or(`user_id.eq.${user.id},calendar_id.in.(${myCalendarIds.join(',')})`)
+                        .gte('transaction_date', startDate)
+                        .lt('transaction_date', endDate)
+                    : supabase
+                        .from('ledger')
+                        .select('amount, category, category_group, transaction_date')
+                        .eq('user_id', user.id)
+                        .gte('transaction_date', startDate)
+                        .lt('transaction_date', endDate),
                 supabase
                     .from('bank_transactions')
                     .select('amount, transaction_type, transaction_date')
@@ -68,45 +88,45 @@ export async function fetchPeriodStats(startDate: string, endDate: string): Prom
                 throw new Error('데이터 조회 중 오류가 발생했습니다.');
             }
 
-        // 1. Events (Paid vs Pending)
-        // Paid: [송금완료] in memo (assuming is_received is false)
-        const eventGivenPaid = events?.filter((e: any) =>
-            !e.is_received && e.memo?.includes('[송금완료]')
-        ).reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
+            // 1. Events (Paid vs Pending)
+            // Paid: [송금완료] in memo (assuming is_received is false)
+            const eventGivenPaid = events?.filter((e: any) =>
+                !e.is_received && e.memo?.includes('[송금완료]')
+            ).reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
 
-        // Pending: Not Sent yet
-        const eventGivenPending = events?.filter((e: any) =>
-            !e.is_received && !e.memo?.includes('[송금완료]')
-        ).reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
+            // Pending: Not Sent yet
+            const eventGivenPending = events?.filter((e: any) =>
+                !e.is_received && !e.memo?.includes('[송금완료]')
+            ).reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
 
-        const eventReceived = events?.filter((e: any) => e.is_received).reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
+            const eventReceived = events?.filter((e: any) => e.is_received).reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
 
-        // 2. Ledger Given (Expenses)
-        // Exclude Income/Deposit categories/groups
-        const ledgerGiven = ledger?.filter((e: any) =>
-            e.category_group !== 'income' &&
-            e.category_group !== 'asset_transfer' &&
-            e.category !== '수입' &&
-            e.category !== '입금' &&
-            e.category !== '이체' && // Assuming transfers are not spending
-            e.category !== '저축'
-        ).reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
+            // 2. Ledger Given (Expenses)
+            // Exclude Income/Deposit categories/groups
+            const ledgerGiven = ledger?.filter((e: any) =>
+                e.category_group !== 'income' &&
+                e.category_group !== 'asset_transfer' &&
+                e.category !== '수입' &&
+                e.category !== '입금' &&
+                e.category !== '이체' && // Assuming transfers are not spending
+                e.category !== '저축'
+            ).reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
 
-        const ledgerReceived = ledger?.filter((e: any) =>
-            e.category_group === 'income' ||
-            e.category === '수입' ||
-            e.category === '입금'
-        ).reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
+            const ledgerReceived = ledger?.filter((e: any) =>
+                e.category_group === 'income' ||
+                e.category === '수입' ||
+                e.category === '입금'
+            ).reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
 
-        // 3. Bank Given (Withdrawals)
-        const bankGiven = bank?.filter((e: any) => e.transaction_type === 'withdrawal').reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
-        const bankReceived = bank?.filter((e: any) => e.transaction_type === 'deposit').reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
+            // 3. Bank Given (Withdrawals)
+            const bankGiven = bank?.filter((e: any) => e.transaction_type === 'withdrawal').reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
+            const bankReceived = bank?.filter((e: any) => e.transaction_type === 'deposit').reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
 
-        // 4. Totals (Unified Definition)
-        // Spending = Event(Paid) + Ledger + Bank
-        const totalGiven = eventGivenPaid + ledgerGiven + bankGiven;
-        const pendingGiven = eventGivenPending;
-        const totalReceived = eventReceived + ledgerReceived + bankReceived;
+            // 4. Totals (Unified Definition)
+            // Spending = Event(Paid) + Ledger + Bank
+            const totalGiven = eventGivenPaid + ledgerGiven + bankGiven;
+            const pendingGiven = eventGivenPending;
+            const totalReceived = eventReceived + ledgerReceived + bankReceived;
 
             const result = {
                 totalGiven,

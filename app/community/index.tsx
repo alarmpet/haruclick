@@ -1,172 +1,85 @@
-import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator } from 'react-native';
-import { useState, useEffect, useCallback } from 'react';
-import { Stack } from 'expo-router';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Platform, StatusBar } from 'react-native';
 import { Colors } from '../../constants/Colors';
-import { PollService, Poll } from '../../services/PollService';
-import { PollCard } from '../../components/PollCard';
+import { ChannelList } from '../../components/community/ChannelList';
+import { HaruPlaza } from '../../components/community/HaruPlaza';
 
-export default function CommunityScreen() {
-    const [polls, setPolls] = useState<Poll[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-
-    const loadPolls = useCallback(async () => {
-        setLoading(true);
-        const data = await PollService.getActivePolls();
-        setPolls(data);
-        setLoading(false);
-    }, []);
-
-    useEffect(() => {
-        loadPolls();
-    }, [loadPolls]);
-
-    const onRefresh = useCallback(async () => {
-        setRefreshing(true);
-        await loadPolls();
-        setRefreshing(false);
-    }, [loadPolls]);
-
-    const handleVoteSubmitted = useCallback(() => {
-        // Optionally reload polls to get updated vote counts
-        loadPolls();
-    }, [loadPolls]);
-
-    const renderItem = useCallback(({ item }: { item: Poll }) => (
-        <PollCard
-            poll={item}
-            onVoteSubmitted={handleVoteSubmitted}
-            onDeleted={loadPolls}
-        />
-    ), [handleVoteSubmitted, loadPolls]);
-
-    const keyExtractor = useCallback((item: Poll) => item.id, []);
-
-    if (loading) {
-        return (
-            <>
-                <Stack.Screen options={{ title: '하루 광장' }} />
-                <View style={styles.centerContainer}>
-                    <ActivityIndicator size="large" color={Colors.orange} />
-                    <Text style={styles.loadingText}>커뮤니티 투표를 불러오는 중...</Text>
-                </View>
-            </>
-        );
-    }
+export default function CommunityHomeScreen() {
+    const [activeTab, setActiveTab] = useState<'channels' | 'plaza'>('channels');
 
     return (
-        <>
-            <Stack.Screen options={{ title: '하루 광장' }} />
-            <View style={styles.container}>
-                {/* Hero Header */}
-                <View style={styles.heroHeader}>
-                    <Text style={styles.heroTitle}>하루 광장</Text>
-                    <Text style={styles.heroSubtitle}>
-                        다른 사람들의 고민을 보고 의견을 나눠보세요
-                    </Text>
+        <SafeAreaView style={styles.safeArea}>
+            <View style={styles.header}>
+                <View style={styles.segmentContainer}>
+                    <TouchableOpacity
+                        style={[styles.segmentButton, activeTab === 'channels' && styles.segmentActive]}
+                        onPress={() => setActiveTab('channels')}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={[styles.segmentText, activeTab === 'channels' && styles.segmentTextActive]}>채널</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.segmentButton, activeTab === 'plaza' && styles.segmentActive]}
+                        onPress={() => setActiveTab('plaza')}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={[styles.segmentText, activeTab === 'plaza' && styles.segmentTextActive]}>하루 광장</Text>
+                    </TouchableOpacity>
                 </View>
-
-                {/* Poll List */}
-                <FlatList
-                    data={polls}
-                    keyExtractor={keyExtractor}
-                    renderItem={renderItem}
-                    initialNumToRender={6}
-                    windowSize={5}
-                    maxToRenderPerBatch={10}
-                    removeClippedSubviews
-                    contentContainerStyle={styles.listContent}
-                    refreshControl={
-                        <RefreshControl
-                            refreshing={refreshing}
-                            onRefresh={onRefresh}
-                            tintColor={Colors.orange}
-                            colors={[Colors.orange]}
-                        />
-                    }
-                    ListEmptyComponent={
-                        <View style={styles.emptyContainer}>
-                            <Text style={styles.emptyIcon}>🤔</Text>
-                            <Text style={styles.emptyTitle}>아직 투표가 없어요</Text>
-                            <Text style={styles.emptyText}>
-                                분석 결과 화면에서{'\n'}
-                                "익명으로 의견 물어보기"를 눌러{'\n'}
-                                첫 투표를 시작해보세요!
-                            </Text>
-                        </View>
-                    }
-                />
             </View>
-        </>
+
+            <View style={styles.content}>
+                {activeTab === 'channels' ? <ChannelList /> : <HaruPlaza />}
+            </View>
+        </SafeAreaView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
+    safeArea: {
         flex: 1,
-        backgroundColor: Colors.background,
+        backgroundColor: Colors.white,
+        paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
     },
-    centerContainer: {
+    header: {
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        backgroundColor: Colors.white,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+        zIndex: 10,
+    },
+    segmentContainer: {
+        flexDirection: 'row',
+        backgroundColor: '#F5F6F8',
+        borderRadius: 8,
+        padding: 4,
+    },
+    segmentButton: {
         flex: 1,
-        justifyContent: 'center',
+        paddingVertical: 8,
         alignItems: 'center',
-        backgroundColor: Colors.background,
+        borderRadius: 6,
     },
-    loadingText: {
-        marginTop: 16,
-        fontFamily: 'Pretendard-Medium',
-        fontSize: 16,
-        color: Colors.text,
-    },
-    heroHeader: {
-        backgroundColor: Colors.navy,
-        paddingHorizontal: 24,
-        paddingTop: 32,
-        paddingBottom: 40,
-        borderBottomLeftRadius: 32,
-        borderBottomRightRadius: 32,
+    segmentActive: {
+        backgroundColor: Colors.white,
         shadowColor: Colors.shadow,
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.2,
-        shadowRadius: 16,
-        elevation: 8,
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
+        elevation: 2,
     },
-    heroTitle: {
-        fontFamily: 'Pretendard-Bold',
-        fontSize: 32,
-        color: Colors.white,
-        marginBottom: 8,
-    },
-    heroSubtitle: {
-        fontFamily: 'Pretendard-Medium',
-        fontSize: 15,
-        color: Colors.white,
-        opacity: 0.9,
-    },
-    listContent: {
-        padding: 20,
-        paddingTop: 24,
-    },
-    emptyContainer: {
-        alignItems: 'center',
-        paddingVertical: 60,
-        paddingHorizontal: 40,
-    },
-    emptyIcon: {
-        fontSize: 64,
-        marginBottom: 16,
-    },
-    emptyTitle: {
-        fontFamily: 'Pretendard-Bold',
-        fontSize: 20,
-        color: Colors.text,
-        marginBottom: 12,
-    },
-    emptyText: {
+    segmentText: {
         fontFamily: 'Pretendard-Medium',
         fontSize: 15,
         color: Colors.subText,
-        textAlign: 'center',
-        lineHeight: 24,
     },
+    segmentTextActive: {
+        fontFamily: 'Pretendard-Bold',
+        color: Colors.text,
+    },
+    content: {
+        flex: 1,
+        backgroundColor: Colors.background,
+    }
 });

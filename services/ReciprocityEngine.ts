@@ -1,11 +1,27 @@
 import { scheduleEventNotification } from './notifications';
 import { supabase } from './supabase-modules/client';
+import { getMyCalendarIds } from './supabase-modules/calendars';
 
 export class ReciprocityEngine {
 
+    private static running = false;
+
+    private static normalizeTimeToHHmm(value?: string): string | undefined {
+        if (!value) return undefined;
+        const match = value.match(/(\d{1,2}):(\d{2})/);
+        if (!match) return undefined;
+        const hours = match[1].padStart(2, '0');
+        const minutes = match[2];
+        return `${hours}:${minutes}`;
+    }
 
     // Check if we need to repay someone for an upcoming event
     static async checkReciprocityNeeds() {
+        if (this.running) {
+            console.log('[Reciprocity] Skipping - already running');
+            return;
+        }
+        this.running = true;
         console.log("[Reciprocity] Checking reciprocity needs...");
 
         try {
@@ -21,34 +37,59 @@ export class ReciprocityEngine {
             // event_type이 wedding/funeral 등인 것을 찾음.
 
             // FIXME: 단순화를 위해 이번 주 모든 이벤트 알림 스케줄링 (중복은 notifications에서 처리)
-            const { data: events, error } = await supabase
+            const myCalendarIds = await getMyCalendarIds();
+            const { data: { user } } = await supabase.auth.getUser();
+
+            let query = supabase
                 .from('events')
                 .select('*')
                 .gte('event_date', today.toISOString().split('T')[0])
                 .lte('event_date', nextWeek.toISOString().split('T')[0]);
 
+            if (user && myCalendarIds.length > 0) {
+                // Safe UUID quoting for .or() query
+                const quotedIds = myCalendarIds.map(id => `"${id}"`).join(',');
+                query = query.or(`calendar_id.in.(${quotedIds}),and(calendar_id.is.null,user_id.eq.${user.id})`);
+            } else if (user) {
+                query = query.eq('user_id', user.id);
+            }
+
+            const { data: events, error } = await query;
+
             if (error) throw error;
 
             if (events && events.length > 0) {
+
                 console.log(`[Reciprocity] Found ${events.length} upcoming events.`);
                 for (const event of events) {
-                    // 1일 전, 당일 알림
+                    const eventTime = this.normalizeTimeToHHmm(event.start_time) || '09:00';
+                    const eventName = event.name || event.title || '일정';
+
+                    // 1일 전 (D-1)
+                    console.log(`[Reciprocity] Scheduling [D-1] for ${eventName}`);
                     await scheduleEventNotification(
-                        event.name || event.title || '일정',
+                        eventName,
                         event.event_date,
-                        event.start_time || '09:00', // 기본값 09:00
-                        60 * 24 // 1일 전 (분 단위)
+                        eventTime, // 기본값 09:00
+                        60 * 24, // 1일 전 (분 단위)
+                        event.id
                     );
+
+                    // 1시간 전 (D-1h)
+                    console.log(`[Reciprocity] Scheduling [D-1h] for ${eventName}`);
                     await scheduleEventNotification(
-                        event.name || event.title || '일정',
+                        eventName,
                         event.event_date,
-                        event.start_time || '09:00',
-                        60 // 1시간 전
+                        eventTime,
+                        60, // 1시간 전
+                        event.id
                     );
                 }
             }
         } catch (error) {
             console.error('[Reciprocity] Error:', error);
+        } finally {
+            this.running = false;
         }
     }
 

@@ -1,6 +1,21 @@
 ﻿import { supabase, getCached, setCache, withInflight, invalidateUserScopedCache } from './client';
 import { showError } from '../errorHandler';
 import { EventRecord, EventCategory } from './types';
+import { getMyCalendarIds } from './calendars';
+
+/**
+ * Build a safe .or() filter string for calendar-based event queries.
+ * Handles empty arrays and proper UUID quoting.
+ */
+function buildCalendarOrFilter(calendarIds: string[], userId: string): string {
+    if (calendarIds.length === 0) {
+        // No calendars, fall back to legacy user-only filter
+        return `and(calendar_id.is.null,user_id.eq.${userId})`;
+    }
+    // Quote each UUID to prevent injection/parsing issues
+    const quotedIds = calendarIds.map(id => `"${id}"`).join(',');
+    return `calendar_id.in.(${quotedIds}),and(calendar_id.is.null,user_id.eq.${userId})`;
+}
 
 function extractTime(dateTime?: string): string | undefined {
     if (!dateTime) return undefined;
@@ -31,11 +46,11 @@ export async function updateEvent(id: string, updates: any) {
         const { error } = await supabase.from('events').update(updates).eq('id', id);
         if (error) throw error;
         const { data: { user } } = await supabase.auth.getUser();
-        invalidateUserScopedCache(['upcoming_', 'stats_'], user?.id); // ??罹먯떆 臾댄슚??
+        invalidateUserScopedCache(['upcoming_', 'stats_'], user?.id); // 캐시 무효화
         return { error: null };
     } catch (e: any) {
         console.error('Error updating event:', e);
-        showError(e.message ?? '?대깽???낅뜲?댄듃 ?ㅽ뙣');
+        showError(e.message ?? '이벤트 업데이트 실패');
         return { error: e };
     }
 }
@@ -56,24 +71,31 @@ export async function getUpcomingEvents(limit = 2): Promise<EventRecord[]> {
         }
 
         return await withInflight(cacheKey, async () => {
-            // KST ?? ?? ?? ?? (UTC+9)
+            // KST 기준 내일 날짜 (UTC+9)
             const today = new Date(new Date().getTime() + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
+            const myCalendarIds = await getMyCalendarIds();
 
-            // ???? ?? (?? ??, ????)
-            const { data, error } = await supabase
+            let query = supabase
                 .from('events')
-                .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location')
-                .eq('user_id', user.id)
+                .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location, calendar_id, created_by')
                 .gt('event_date', today)
                 .order('event_date', { ascending: true })
                 .limit(limit);
+
+            if (myCalendarIds.length > 0) {
+                query = query.or(buildCalendarOrFilter(myCalendarIds, user.id));
+            } else {
+                query = query.eq('user_id', user.id);
+            }
+
+            const { data, error } = await query;
 
             if (error) throw error;
 
             const result = data.map((item: any) => ({
                 id: item.id,
                 category: item.category || 'ceremony',
-                type: item.type === 'APPOINTMENT' ? '??' : item.type, // UI ??? ???
+                type: item.type === 'APPOINTMENT' ? '일정' : item.type, // UI 표시용 매핑
                 name: item.name,
                 relation: item.relation,
                 date: item.event_date.split('T')[0],
@@ -92,14 +114,22 @@ export async function getUpcomingEvents(limit = 2): Promise<EventRecord[]> {
             return result;
         });
     } catch (e: any) {
-        showError(e.message ?? '?? ??? ?? ??');
+        showError(e.message ?? '홈 데이터 조회 실패');
         return [];
     }
 }
 
 /**
- * ?ㅻ뒛 ?깅줉??紐⑤뱺 ?댁뿭 媛?몄삤湲?(??꾨씪?몄슜)
+ * 오늘 등록된 모든 내역 가져오기 (타임라인용)
  */
+// TTL cache for getTodayEvents (30 seconds)
+const todayEventsCache: {
+    data: EventRecord[] | null;
+    timestamp: number;
+    key: string;
+} = { data: null, timestamp: 0, key: '' };
+const TODAY_CACHE_TTL = 30_000; // 30 seconds
+
 export async function getTodayEvents(): Promise<EventRecord[]> {
     const today = new Date().toISOString().split('T')[0];
     const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
@@ -107,30 +137,54 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
     const userId = user?.id;
     const inflightKey = `today_${userId ?? 'public'}_${today}`;
 
+    // Check TTL cache first
+    const now = Date.now();
+    const cacheKey = `${userId ?? 'public'}_${today}`;
+    if (
+        todayEventsCache.data &&
+        todayEventsCache.key === cacheKey &&
+        now - todayEventsCache.timestamp < TODAY_CACHE_TTL
+    ) {
+        return todayEventsCache.data;
+    }
+
     return withInflight(inflightKey, async () => {
         const userFilter = (query: any) => userId ? query.eq('user_id', userId) : query;
+        const myCalendarIds = userId ? await getMyCalendarIds() : [];
 
-        // 1. Events (???/??)
-        const { data: events } = await userFilter(
-            supabase
-                .from('events')
-                .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location')
-                .gte('event_date', today)
-                .lt('event_date', tomorrow)
-                .order('event_date', { ascending: true })
-        );
+        // 1. Events (캘린더 기반 조회)
+        let eventsQuery = supabase
+            .from('events')
+            .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location, calendar_id, created_by')
+            .gte('event_date', today)
+            .lt('event_date', tomorrow)
+            .order('event_date', { ascending: true });
 
-        // 2. Ledger (???)
-        const { data: ledger } = await userFilter(
-            supabase
-                .from('ledger')
-                .select('id, category, merchant_name, transaction_date, amount, memo')
-                .gte('transaction_date', today)
-                .lt('transaction_date', tomorrow)
-                .order('transaction_date', { ascending: true })
-        );
+        if (userId && myCalendarIds.length > 0) {
+            eventsQuery = eventsQuery.or(buildCalendarOrFilter(myCalendarIds, userId));
+        } else {
+            eventsQuery = userFilter(eventsQuery);
+        }
 
-        // 3. Bank (??)
+        const { data: events } = await eventsQuery;
+
+        // 2. Ledger (가계부) - Calendar-aware filtering
+        let ledgerQuery = supabase
+            .from('ledger')
+            .select('id, category, merchant_name, transaction_date, amount, memo, category_group, calendar_id')
+            .gte('transaction_date', today)
+            .lt('transaction_date', tomorrow)
+            .order('transaction_date', { ascending: true });
+
+        if (userId && myCalendarIds.length > 0) {
+            ledgerQuery = ledgerQuery.or(buildCalendarOrFilter(myCalendarIds, userId));
+        } else {
+            ledgerQuery = userFilter(ledgerQuery);
+        }
+
+        const { data: ledger } = await ledgerQuery;
+
+        // 3. Bank (송금) - Legacy UserID Filter
         const { data: bank } = await userFilter(
             supabase
                 .from('bank_transactions')
@@ -153,6 +207,8 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
             startTime: item.start_time || undefined,
             endTime: item.end_time || undefined,
             location: item.location,
+            calendar_id: item.calendar_id,
+            created_by: item.created_by,
             source: 'events' as const,
         }));
 
@@ -160,7 +216,7 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
             id: item.id,
             category: 'expense' as EventCategory,
             type: 'receipt' as const,
-            name: item.merchant_name || '??',
+            name: item.merchant_name || '지출',
             relation: item.category,
             date: item.transaction_date.split('T')[0],
             amount: item.amount,
@@ -174,7 +230,7 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
             id: item.id,
             category: 'expense' as EventCategory,
             type: 'transfer' as const,
-            name: item.transaction_type === 'deposit' ? (item.sender_name || '??') : (item.receiver_name || '??'),
+            name: item.transaction_type === 'deposit' ? (item.sender_name || '입금') : (item.receiver_name || '출금'),
             relation: item.category,
             date: item.transaction_date.split('T')[0],
             amount: item.amount,
@@ -185,7 +241,7 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
         }));
 
         // 날짜+시간 기준 정렬
-        return [...eventRecords, ...ledgerRecords, ...bankRecords].sort((a, b) => {
+        const result = [...eventRecords, ...ledgerRecords, ...bankRecords].sort((a, b) => {
             const dateCompare = new Date(a.date).getTime() - new Date(b.date).getTime();
             if (dateCompare !== 0) return dateCompare;
 
@@ -194,41 +250,74 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
             const timeB = b.startTime || '00:00:00';
             return timeA.localeCompare(timeB);
         });
+
+        // Store in TTL cache
+        todayEventsCache.data = result;
+        todayEventsCache.timestamp = now;
+        todayEventsCache.key = cacheKey;
+
+        return result;
     });
 }
 
 export async function getEvents(year?: number, month?: number): Promise<EventRecord[]> {
     let startDate: string | undefined;
     let endDate: string | undefined;
+    let startIso: string | undefined;
+    let endIso: string | undefined;
     const { data: { user } } = await supabase.auth.getUser();
     const userId = user?.id;
 
     if (year && month) {
         const start = new Date(year, month - 1, 1);
         const end = new Date(year, month, 1);
-        startDate = start.toISOString().split('T')[0];
-        endDate = end.toISOString().split('T')[0];
+        startIso = start.toISOString();
+        endIso = end.toISOString();
+        startDate = startIso.split('T')[0];
+        endDate = endIso.split('T')[0];
     }
 
     const inflightKey = `events_${userId ?? 'public'}_${startDate ?? 'all'}_${endDate ?? 'all'}`;
 
     return withInflight(inflightKey, async () => {
+        if (__DEV__) {
+            console.log('[getEvents] Params', {
+                year,
+                month,
+                userId: userId ?? 'public',
+                timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+            });
+            console.log('[getEvents] Date range', {
+                startDate: startDate ?? 'all',
+                endDate: endDate ?? 'all',
+                startIso,
+                endIso,
+            });
+        }
         const userFilter = (query: any) => userId ? query.eq('user_id', userId) : query;
+        const myCalendarIds = userId ? await getMyCalendarIds() : [];
 
         // 1. Fetch Events
         console.log('[getEvents] Fetching events table...', { year, month });
-        let eventsQuery = userFilter(
-            supabase
-                .from('events')
-                .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location')
-                .order('event_date', { ascending: true })
-        );
+        let eventsQuery = supabase
+            .from('events')
+            .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location, calendar_id, created_by')
+            .order('event_date', { ascending: true });
 
         if (startDate && endDate) {
             eventsQuery = eventsQuery.gte('event_date', startDate).lt('event_date', endDate);
         }
 
+        if (userId && myCalendarIds.length > 0) {
+            eventsQuery = eventsQuery.or(buildCalendarOrFilter(myCalendarIds, userId));
+        } else {
+            eventsQuery = userFilter(eventsQuery);
+        }
+
         const { data: events, error: eventError } = await eventsQuery;
+        if (eventError) {
+            console.error('[getEvents] Events query error:', eventError);
+        }
         console.log('[getEvents] Events fetched:', events?.length);
 
         // 2. Fetch Ledger
@@ -245,6 +334,9 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
         }
 
         const { data: ledger, error: ledgerError } = await ledgerQuery;
+        if (ledgerError) {
+            console.error('[getEvents] Ledger query error:', ledgerError);
+        }
         console.log('[getEvents] Ledger fetched:', ledger?.length);
 
         // 3. Fetch Bank Transactions
@@ -261,6 +353,9 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
         }
 
         const { data: bank, error: bankError } = await bankQuery;
+        if (bankError) {
+            console.error('[getEvents] Bank query error:', bankError);
+        }
         console.log('[getEvents] Bank fetched:', bank?.length);
 
         const eventRecords = (events || []).map((item: any) => ({
@@ -277,6 +372,8 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
             startTime: item.start_time || undefined,
             endTime: item.end_time || undefined,
             location: item.location,
+            calendar_id: item.calendar_id,
+            created_by: item.created_by,
             source: 'events' as const,
         }));
 
@@ -284,7 +381,7 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
             id: item.id,
             category: 'expense' as EventCategory,
             type: 'receipt' as const,
-            name: item.merchant_name || '??',
+            name: item.merchant_name || '지출',
             relation: item.category,
             date: item.transaction_date.split('T')[0],
             amount: item.amount,
@@ -298,7 +395,7 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
             id: item.id,
             category: 'expense' as EventCategory,
             type: 'transfer' as const,
-            name: item.transaction_type === 'deposit' ? (item.sender_name || '??') : (item.receiver_name || '??'),
+            name: item.transaction_type === 'deposit' ? (item.sender_name || '입금') : (item.receiver_name || '출금'),
             relation: item.category,
             date: item.transaction_date.split('T')[0],
             amount: item.amount,
@@ -322,7 +419,7 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
 }
 
 /**
- * ?쇰컲 ?대깽????젣 (Fix: Missing function)
+ * 일반 이벤트 삭제 (Fix: Missing function)
  */
 export async function deleteEvent(id: string) {
     const { error } = await supabase
@@ -335,6 +432,6 @@ export async function deleteEvent(id: string) {
         throw error;
     }
     const { data: { user } } = await supabase.auth.getUser();
-    invalidateUserScopedCache(['upcoming_', 'stats_'], user?.id); // ??罹먯떆 臾댄슚??
+    invalidateUserScopedCache(['upcoming_', 'stats_'], user?.id); // 캐시 무효화
     return { success: true };
 }

@@ -5,3 +5,4 @@ export * from './supabase-modules/events';
 export * from './supabase-modules/ledger';
 export * from './supabase-modules/relationship-ledger';
 export * from './supabase-modules/unified';
+export * from './supabase-modules/chat';

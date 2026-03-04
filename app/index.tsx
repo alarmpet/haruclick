@@ -10,6 +10,8 @@ import { useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../contexts/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { TimelineItem } from '../components/home/TimelineItem';
+import { UpcomingItem } from '../components/home/UpcomingItem';
 
 export default function Home() {
     const router = useRouter();
@@ -124,17 +126,25 @@ export default function Home() {
         ]);
     }, [fetchDashboardStats, fetchEvents]);
 
+    // Focus cooldown to prevent excessive API calls
+    const lastFetchRef = useRef(0);
+    const FETCH_COOLDOWN = 60_000; // 60 seconds
+
     useFocusEffect(
         useCallback(() => {
-            loadHomeData();
+            const now = Date.now();
+            if (now - lastFetchRef.current > FETCH_COOLDOWN) {
+                lastFetchRef.current = now;
+                loadHomeData();
+            }
         }, [loadHomeData])
     );
 
-    const onRefresh = async () => {
+    const onRefresh = useCallback(async () => {
         setRefreshing(true);
         await loadHomeData();
         setRefreshing(false);
-    };
+    }, [loadHomeData]);
 
 
 
@@ -263,51 +273,7 @@ export default function Home() {
                     <Text style={[styles.timelineTitle, { color: colors.subText }]}>오늘의 기록</Text>
                     {todayEvents.length > 0 ? (
                         todayEvents.slice(0, 3).map((event) => (
-                            <TouchableOpacity
-                                key={event.id}
-                                style={[
-                                    styles.timelineItem,
-                                    event.source === 'events' && { backgroundColor: isDark ? 'rgba(255, 126, 54, 0.1)' : '#FFF7ED' }
-                                ]}
-                                onPress={() => router.push({ pathname: '/calendar', params: { date: event.date?.split('T')[0] } })}
-                                activeOpacity={0.7}
-                            >
-                                {event.source === 'events' ? (
-                                    <View style={[styles.timelineIconContainer, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0,0,0,0.05)' }]}>
-                                        <Text style={{ fontSize: 12 }}>
-                                            {getEventEmoji(event)}
-                                        </Text>
-                                    </View>
-                                ) : (
-                                    <View style={[styles.timelineDot, event.isReceived ? { backgroundColor: colors.success } : { backgroundColor: colors.danger }]} />
-                                )}
-                                <Text
-                                    style={[
-                                        styles.timelineName,
-                                        { color: colors.text },
-                                        event.source === 'events' && { color: colors.orange, fontFamily: 'Pretendard-Bold' }
-                                    ]}
-                                    numberOfLines={1}
-                                >
-                                    {event.name || '내역'}
-                                    {event.source === 'events' && event.location && (
-                                        <Text style={{ color: colors.subText, fontFamily: 'Pretendard-Medium' }}>
-                                            {' / '}{event.location}
-                                        </Text>
-                                    )}
-                                </Text>
-                                {event.amount && event.amount > 0 ? (
-                                    <Text style={[styles.timelineAmount, event.isReceived ? { color: colors.success } : { color: colors.danger }]}>
-                                        {event.isReceived ? '+' : '-'}{event.amount.toLocaleString()}
-                                    </Text>
-                                ) : (
-                                    event.source === 'events' && (
-                                        <Text style={[styles.timelineTime, { color: colors.subText }]}>
-                                            {event.startTime ? event.startTime.substring(0, 5) : '하루 종일'}
-                                        </Text>
-                                    )
-                                )}
-                            </TouchableOpacity>
+                            <TimelineItem key={event.id} event={event} />
                         ))
                     ) : (
                         <View style={styles.emptyTimeline}>
@@ -348,21 +314,7 @@ export default function Home() {
                         upcomingEvents.map((event) => {
                             const dDay = getDDay(event.date);
                             return (
-                                <TouchableOpacity
-                                    key={event.id}
-                                    style={[styles.upcomingItem, { borderBottomColor: colors.border }]}
-                                    onPress={() => router.push({ pathname: '/calendar', params: { date: event.date.split('T')[0] } })}
-                                    activeOpacity={0.7}
-                                >
-                                    <View style={styles.upcomingLeft}>
-                                        <Text style={styles.upcomingType}>{getEventEmoji(event)}</Text>
-                                        <View>
-                                            <Text style={[styles.upcomingName, { color: colors.text }]}>{event.name || '일정'}</Text>
-                                            <Text style={[styles.upcomingDate, { color: colors.subText }]}>{event.date?.split('T')[0]}{event.relation ? ` · ${event.relation} ` : ''}</Text>
-                                        </View>
-                                    </View>
-                                    <Text style={[styles.upcomingDDay, dDay === 'D-Day' && { color: colors.orange }]}>{dDay}</Text>
-                                </TouchableOpacity>
+                                <UpcomingItem key={event.id} event={event} dDay={dDay} />
                             );
                         })
                     )}

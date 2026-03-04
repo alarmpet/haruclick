@@ -115,16 +115,26 @@ export default function RootLayout() {
         // Initialize Notifications
         const init = async () => {
             try {
-                const token = await registerForPushNotificationsAsync();
+                // 1. Push Token 시도 (실패해도 진행)
+                let token: string | null = null;
+                try {
+                    token = await registerForPushNotificationsAsync();
+                } catch (e) {
+                    console.log('[Init] Push token failed:', e);
+                }
+
+                // 2. 토큰 있으면 저장
                 if (token) {
                     const { data: { session: currentSession } } = await supabase.auth.getSession();
                     if (currentSession?.user) {
                         await savePushToken(currentSession.user.id, token);
                     }
-                    await ReciprocityEngine.runChecks();
                 }
+
+                // 3. 로컬 알림 스케줄링 (토큰 무관)
+                await ReciprocityEngine.runChecks();
             } catch (e) {
-                console.log('Notification init failed (likely missing FCM config):', e);
+                console.log('Notification init failed behavior:', e);
             }
         };
         init();
@@ -349,6 +359,15 @@ export default function RootLayout() {
                         }}
                     />
                     <Tabs.Screen
+                        name="community/index"
+                        options={{
+                            title: '관심',
+                            tabBarIcon: ({ color, focused }) => (
+                                <Ionicons name={focused ? "heart" : "heart-outline"} size={24} color={color} />
+                            ),
+                        }}
+                    />
+                    <Tabs.Screen
                         name="settings/index"
                         options={{
                             title: '설정',
@@ -383,10 +402,21 @@ export default function RootLayout() {
                             href: null,
                         }}
                     />
+
+
+                    {/* Community subroutes hidden */}
                     <Tabs.Screen
-                        name="community/index"
+                        name="community/[categoryId]/index"
                         options={{
                             href: null,
+                            tabBarStyle: { display: 'none' }
+                        }}
+                    />
+                    <Tabs.Screen
+                        name="community/[categoryId]/new-post"
+                        options={{
+                            href: null,
+                            tabBarStyle: { display: 'none' }
                         }}
                     />
 
@@ -473,10 +503,38 @@ export default function RootLayout() {
                         }}
                     />
                     <Tabs.Screen
+                        name="settings/interests"
+                        options={{
+                            href: null,
+                        }}
+                    />
+                    <Tabs.Screen
                         name="stats/index"
                         options={{
                             href: null,
                         }}
+                    />
+
+                    {/* Calendar manage subpages hidden */}
+                    <Tabs.Screen
+                        name="calendar/manage/index"
+                        options={{ href: null }}
+                    />
+                    <Tabs.Screen
+                        name="calendar/manage/create"
+                        options={{ href: null }}
+                    />
+                    <Tabs.Screen
+                        name="calendar/manage/join"
+                        options={{ href: null }}
+                    />
+                    <Tabs.Screen
+                        name="calendar/manage/[id]"
+                        options={{ href: null }}
+                    />
+                    <Tabs.Screen
+                        name="calendar/chat/[id]"
+                        options={{ href: null }}
                     />
                 </Tabs>
             </LoadingProvider>

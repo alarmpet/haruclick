@@ -11,6 +11,10 @@
     "test": "jest",
     "e2e:build": "detox build --configuration android.emu.debug",
     "e2e:test": "detox test --configuration android.emu.debug",
+    "e2e:chat:web": "powershell -ExecutionPolicy Bypass -File e2e/run_chat_flow.ps1",
+    "e2e:chat:inspect": "python e2e/inspect_dom.py --base-url http://localhost:8090",
+    "chat:finalize": "powershell -ExecutionPolicy Bypass -File scripts/finalize_chat_upgrade.ps1",
+    "chat:finalize:e2e": "powershell -ExecutionPolicy Bypass -File scripts/finalize_chat_upgrade.ps1 -RunE2E",
     "docs": "node scripts/genReadme.js"
   },
   "dependencies": {
@@ -22,6 +26,7 @@
     "@react-native-seoul/naver-login": "^4.2.3",
     "@react-native-voice/voice": "^3.2.4",
     "@supabase/supabase-js": "^2.90.1",
+    "cheerio": "^1.2.0",
     "expo": "~54.0.31",
     "expo-asset": "^12.0.12",
     "expo-av": "^16.0.8",
@@ -46,6 +51,7 @@
     "expo-status-bar": "~3.0.9",
     "expo-web-browser": "^15.0.10",
     "korean-lunar-calendar": "^0.3.6",
+    "playwright": "^1.58.2",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",

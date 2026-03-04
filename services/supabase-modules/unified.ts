@@ -4,6 +4,7 @@ import { classifyMerchant } from '../CategoryClassifier';
 import { validateCategory } from '../CategoryValidator';
 import { ScannedData, StorePaymentResult, BankTransactionResult, InvitationResult, TransferResult, ReceiptResult, BillResult, SocialResult, AppointmentResult } from '../ai/OpenAIService';
 import { CATEGORY_MAP, CategoryGroupType } from '../../constants/categories';
+import { getDefaultCalendarId } from './calendars';
 
 /**
  * AI returns date format (e.g. "2023-01-11 18:35").
@@ -87,6 +88,7 @@ export async function saveUnifiedEvent(
         isAllDay?: boolean;
         categoryGroup?: CategoryGroupType;
         isReceived?: boolean;
+        calendarId?: string; // NEW: Calendar ID support
     }
 ): Promise<void> {
     console.log('[saveUnifiedEvent] Function start', options);
@@ -112,6 +114,9 @@ export async function saveUnifiedEvent(
             throw new Error('로그인이 필요합니다. 다시 로그인해주세요.');
         }
 
+        // Resolve Calendar ID (for events only, ledger defaults to NULL unless explicitly shared)
+        const calendarId = options?.calendarId || await getDefaultCalendarId(userId);
+
         if (data.type === 'APPOINTMENT' || data.type === 'UNKNOWN') {
             // Handle APPOINTMENT (Schedule/Todo)
             const appointment = data as AppointmentResult;
@@ -131,6 +136,8 @@ export async function saveUnifiedEvent(
 
             const { error } = await supabase.from('events').insert({
                 user_id: userId,
+                calendar_id: calendarId, // NEW
+                created_by: userId, // NEW
                 name: appointment.title || '일정',
                 event_date: safeEventDate,
                 type: data.type === 'UNKNOWN' ? 'OTHER' : 'APPOINTMENT',
@@ -209,6 +216,8 @@ export async function saveUnifiedEvent(
 
                 const insertData = {
                     user_id: userId,
+                    calendar_id: calendarId, // NEW
+                    created_by: userId, // NEW
                     type: invite.eventType || 'wedding',
                     name: resolvedName,
                     event_date: currentDateStr,
@@ -246,6 +255,7 @@ export async function saveUnifiedEvent(
             console.log('[saveUnifiedEvent] INVITATION Save complete');
         }
 
+        // Ledger & Bank Transactions (Keep as personal for now, no calendar_id)
         if (data.type === 'STORE_PAYMENT') {
             const pay = data as StorePaymentResult;
             console.log('[saveUnifiedEvent] ledger Table INSERT attempt...');
@@ -254,6 +264,7 @@ export async function saveUnifiedEvent(
 
             const { error } = await supabase.from('ledger').insert({
                 user_id: userId,
+                calendar_id: options?.calendarId || null, // Personal ledger: NULL, Shared: explicit calendarId
                 transaction_date: toISODate(pay.date),
                 amount: pay.amount || 0, // Default to 0 if missing (Voice/Text fallback)
                 merchant_name: pay.merchant,
@@ -271,27 +282,31 @@ export async function saveUnifiedEvent(
         } else if (data.type === 'BANK_TRANSFER') {
             // FIX: Prevent block splitting leading to wrong type detection? No, handled in ocr.ts
             const trans = data as BankTransactionResult;
+            const category = (trans as any).category || (classifyMerchant(trans.targetName) === '기타' ? '주거/통신/광열' : classifyMerchant(trans.targetName));
+            const categoryGroup = options?.categoryGroup || determineCategoryGroup(category);
+
+            // Validate: shared calendar only allows expense group types
+            if (calendarId && categoryGroup !== 'fixed_expense' && categoryGroup !== 'variable_expense') {
+                throw new Error('공유 캘린더에는 지출 데이터만 저장할 수 있습니다.');
+            }
 
             if ((trans as any).isUtility) {
                 // Utilities/Fixed Expenses -> Ledger
-                const rawCategory = (trans as any).category || (classifyMerchant(trans.targetName) === '기타' ? '주거/통신/광열' : classifyMerchant(trans.targetName));
-                const validated = validateCategory(rawCategory, (trans as any).subCategory);
-
                 const { error } = await supabase.from('ledger').insert({
                     user_id: userId,
+                    calendar_id: options?.calendarId || null, // Personal ledger: NULL, Shared: explicit calendarId
                     transaction_date: toISODate(trans.date),
                     amount: trans.amount,
                     merchant_name: trans.targetName,
-                    category: validated.category,
-                    sub_category: validated.subCategory,
-                    category_group: validated.categoryGroup,
+                    category: category,
+                    sub_category: (trans as any).subCategory,
+                    category_group: categoryGroup,
+                    memo: trans.memo || `[공과금] ${trans.transactionType === 'deposit' ? '입금' : '출금'}`,
                     image_url: imageUrl,
-                    memo: `[공과금] ${trans.transactionType === 'deposit' ? '입금' : '출금'}`,
                     raw_text: JSON.stringify(data)
                 });
                 if (error) throw error;
             } else {
-                // Personal Transfer/Remittance -> Bank Transactions
                 const { error } = await supabase.from('bank_transactions').insert({
                     user_id: userId,
                     transaction_date: toISODate(trans.date),
@@ -315,6 +330,7 @@ export async function saveUnifiedEvent(
 
             const { error } = await supabase.from('ledger').insert({
                 user_id: userId,
+                calendar_id: options?.calendarId || null, // Personal ledger: NULL, Shared: explicit calendarId
                 transaction_date: new Date().toISOString(),
                 amount: transfer.amount,
                 merchant_name: transfer.senderName,
@@ -336,6 +352,7 @@ export async function saveUnifiedEvent(
 
             const { error } = await supabase.from('ledger').insert({
                 user_id: userId,
+                calendar_id: options?.calendarId || null, // Personal ledger: NULL, Shared: explicit calendarId
                 transaction_date: receipt.date || new Date().toISOString(),
                 amount: receipt.amount,
                 merchant_name: receipt.merchant,
@@ -351,6 +368,8 @@ export async function saveUnifiedEvent(
             const bill = data as BillResult;
             const { error } = await supabase.from('events').insert({
                 user_id: userId,
+                calendar_id: calendarId, // NEW
+                created_by: userId, // NEW
                 type: 'todo',
                 name: bill.title,
                 event_date: bill.dueDate,

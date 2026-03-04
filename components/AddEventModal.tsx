@@ -29,6 +29,8 @@ import SpinnerTimePicker from './SpinnerTimePicker';
 import { saveUnifiedEvent, updateUnifiedEvent } from '../services/supabase';
 import { RecommendationEngine, RecommendationResult } from '../services/RecommendationEngine';
 import { CATEGORY_MAP, CATEGORY_GROUPS, getReviewCategoryList, CategoryGroupType } from '../constants/categories';
+import { Calendar, LocaleConfig } from 'react-native-calendars';
+import { Calendar as SharedCalendar, getMyCalendars } from '../services/supabase-modules/calendars';
 
 const { width } = Dimensions.get('window');
 
@@ -125,6 +127,10 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
     const [ledgerGroup, setLedgerGroup] = useState<CategoryGroupType>('variable_expense');
     const [ledgerCategory, setLedgerCategory] = useState('식비');
 
+    // Calendar Selection
+    const [myCalendars, setMyCalendars] = useState<SharedCalendar[]>([]);
+    const [selectedCalendarId, setSelectedCalendarId] = useState<string | null>(null);
+
     // ✅ 커스텀 모달 상태 (Android Alert 제한 해결)
     const [showRecurrenceModal, setShowRecurrenceModal] = useState(false);
 
@@ -132,6 +138,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
     const THEME_NAVY = Colors.navy;
     const THEME_ORANGE = Colors.orange;
     const [showAlarmModal, setShowAlarmModal] = useState(false);
+    const [showCalendarModal, setShowCalendarModal] = useState(false);
 
     const recurrenceOptions = [
         { label: '반복 안함', value: 'none' },
@@ -151,9 +158,28 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
     ];
     const [recommendation, setRecommendation] = useState<RecommendationResult | null>(null);
 
+    // Check if expense category is allowed in selected calendar
+    const canUseExpenseInCalendar = () => {
+        if (!selectedCalendarId) return true; // Personal calendar
+        const selectedCal = myCalendars.find(c => c.id === selectedCalendarId);
+        if (!selectedCal) return true;
+        if (selectedCal.role === 'viewer') return false;
+        // Check shared_categories
+        return (selectedCal as any).shared_categories?.includes('expense') ?? false;
+    };
+
     useEffect(() => {
         if (visible) {
+            getMyCalendars().then(cals => {
+                setMyCalendars(cals);
+                if (!editEvent && !selectedCalendarId) {
+                    const personal = cals.find(c => c.is_personal);
+                    setSelectedCalendarId(personal?.id || cals[0]?.id || null);
+                }
+            });
+
             if (editEvent) {
+                if (editEvent.calendar_id) setSelectedCalendarId(editEvent.calendar_id);
                 // Edit Mode: Pre-fill data
                 setTitle(editEvent.name || '');
                 setCategory(editEvent.category || 'schedule');
@@ -229,6 +255,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                     event_date: date,
                     memo: memo,
                     amount: parseInt(amount) || 0,
+                    calendar_id: selectedCalendarId || null,
                 };
 
                 // Add specific fields based on category/source
@@ -293,6 +320,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                         startTime: isAllDay ? undefined : startTime,
                         endTime: isAllDay ? undefined : endTime,
                         isAllDay: isAllDay,
+                        calendarId: selectedCalendarId || undefined
                     });
                 } else if (category === 'expense') {
                     const parsedAmount = parseInt(amount) || 0;
@@ -347,7 +375,8 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                         alarmMinutes: selectedAlarm !== null ? selectedAlarm : undefined,
                         startTime: isAllDay ? undefined : startTime,
                         endTime: isAllDay ? undefined : endTime,
-                        isAllDay: isAllDay
+                        isAllDay: isAllDay,
+                        calendarId: selectedCalendarId || undefined
                     });
                 }
             }
@@ -445,6 +474,44 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
     // ==================== 경조사 UI ====================
     const renderCeremonyUI = () => (
         <>
+            {/* 캘린더 선택 */}
+            {myCalendars.length > 0 && (
+                <View style={{ marginBottom: 20 }}>
+                    <Text style={[styles.label, { color: colors.subText }]}>📅 캘린더</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row' }}>
+                        {myCalendars.map(cal => (
+                            <TouchableOpacity
+                                key={cal.id}
+                                style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    paddingVertical: 8,
+                                    paddingHorizontal: 12,
+                                    borderRadius: 20,
+                                    backgroundColor: selectedCalendarId === cal.id ? (cal.color || Colors.primary) : colors.card,
+                                    marginRight: 8,
+                                    borderWidth: 1,
+                                    borderColor: selectedCalendarId === cal.id ? 'transparent' : colors.border
+                                }}
+                                onPress={() => setSelectedCalendarId(cal.id)}
+                            >
+                                <View style={{
+                                    width: 8, height: 8, borderRadius: 4, marginRight: 6,
+                                    backgroundColor: selectedCalendarId === cal.id ? '#fff' : (cal.color || Colors.primary)
+                                }} />
+                                <Text style={{
+                                    fontSize: 14,
+                                    color: selectedCalendarId === cal.id ? '#fff' : colors.text,
+                                    fontWeight: selectedCalendarId === cal.id ? '600' : '400'
+                                }}>
+                                    {cal.name}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+            )}
+
             {/* 경조사 종류 */}
             <Text style={[styles.label, { color: colors.subText }]}>📋 경조사 종류</Text>
             <View style={styles.ceremonyTypes}>
@@ -485,7 +552,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
 
             {/* 날짜 */}
             <Text style={[styles.label, { color: colors.subText }]}>📅 날짜</Text>
-            <TouchableOpacity style={styles.dateButton}>
+            <TouchableOpacity style={styles.dateButton} onPress={() => setShowCalendarModal(true)}>
                 <Text style={[styles.dateText, { color: colors.text }]}>{formatDate(date)}</Text>
             </TouchableOpacity>
 
@@ -591,6 +658,43 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
     // ==================== 일정/할일 UI (구글 캘린더 스타일) ====================
     const renderScheduleUI = () => (
         <>
+            {/* 캘린더 선택 */}
+            {myCalendars.length > 0 && (
+                <View style={{ marginBottom: 12 }}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row' }}>
+                        {myCalendars.map(cal => (
+                            <TouchableOpacity
+                                key={cal.id}
+                                style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    paddingVertical: 8,
+                                    paddingHorizontal: 12,
+                                    borderRadius: 20,
+                                    backgroundColor: selectedCalendarId === cal.id ? (cal.color || Colors.primary) : colors.card,
+                                    marginRight: 8,
+                                    borderWidth: 1,
+                                    borderColor: selectedCalendarId === cal.id ? 'transparent' : colors.border
+                                }}
+                                onPress={() => setSelectedCalendarId(cal.id)}
+                            >
+                                <View style={{
+                                    width: 8, height: 8, borderRadius: 4, marginRight: 6,
+                                    backgroundColor: selectedCalendarId === cal.id ? '#fff' : (cal.color || Colors.primary)
+                                }} />
+                                <Text style={{
+                                    fontSize: 14,
+                                    color: selectedCalendarId === cal.id ? '#fff' : colors.text,
+                                    fontWeight: selectedCalendarId === cal.id ? '600' : '400'
+                                }}>
+                                    {cal.name}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+            )}
+
             {/* 제목 */}
             <TextInput
                 style={[styles.titleInput, { color: colors.text }]}
@@ -613,11 +717,18 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             </View>
 
             {/* 날짜/시간 */}
-            <TouchableOpacity style={styles.row} onPress={() => !isAllDay && openTimePicker('start')}>
+            {/* 날짜/시간 */}
+            <View style={styles.row}>
                 <View style={{ width: 24 }} />
-                <Text style={[styles.rowText, { color: colors.text }]}>{formatDate(date)}</Text>
-                {!isAllDay && <Text style={styles.timeText}>{startTime}</Text>}
-            </TouchableOpacity>
+                <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowCalendarModal(true)}>
+                    <Text style={[styles.rowText, { color: colors.text }]}>{formatDate(date)}</Text>
+                </TouchableOpacity>
+                {!isAllDay && (
+                    <TouchableOpacity onPress={() => openTimePicker('start')}>
+                        <Text style={styles.timeText}>{startTime}</Text>
+                    </TouchableOpacity>
+                )}
+            </View>
 
             {!isAllDay && (
                 <TouchableOpacity style={styles.row} onPress={() => openTimePicker('end')}>
@@ -706,7 +817,7 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
             </View>
 
             {/* 날짜 */}
-            <TouchableOpacity style={styles.row} onPress={() => !isAllDay && openTimePicker('start')}>
+            <TouchableOpacity style={styles.row} onPress={() => setShowCalendarModal(true)}>
                 <Ionicons name="calendar-outline" size={24} color="#888" />
                 <Text style={[styles.rowText, { color: colors.text }]}>{formatDate(date)}</Text>
             </TouchableOpacity>
@@ -798,22 +909,34 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
 
                 {/* 카테고리 탭 */}
                 <View style={styles.categoryTabs}>
-                    {CATEGORY_TABS.map((tab) => (
-                        <TouchableOpacity
-                            key={tab.key}
-                            style={[styles.categoryTab, category === tab.key && styles.categoryTabActive]}
-                            onPress={() => setCategory(tab.key as any)}
-                        >
-                            <Ionicons
-                                name={tab.icon as any}
-                                size={16}
-                                color={category === tab.key ? '#fff' : '#888'}
-                            />
-                            <Text style={[styles.categoryTabText, category === tab.key && styles.categoryTabTextActive]}>
-                                {tab.label}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
+                    {CATEGORY_TABS.map((tab) => {
+                        const isDisabled = tab.key === 'expense' && !canUseExpenseInCalendar();
+                        return (
+                            <TouchableOpacity
+                                key={tab.key}
+                                style={[
+                                    styles.categoryTab,
+                                    category === tab.key && styles.categoryTabActive,
+                                    isDisabled && styles.categoryTabDisabled
+                                ]}
+                                onPress={() => !isDisabled && setCategory(tab.key as any)}
+                                disabled={isDisabled}
+                            >
+                                <Ionicons
+                                    name={tab.icon as any}
+                                    size={16}
+                                    color={isDisabled ? '#444' : (category === tab.key ? '#fff' : '#888')}
+                                />
+                                <Text style={[
+                                    styles.categoryTabText,
+                                    category === tab.key && styles.categoryTabTextActive,
+                                    isDisabled && styles.categoryTabTextDisabled
+                                ]}>
+                                    {tab.label}
+                                </Text>
+                            </TouchableOpacity>
+                        );
+                    })}
                 </View>
 
                 <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
@@ -955,7 +1078,41 @@ export function AddEventModal({ visible, onClose, onSaved, initialDate, initialC
                     </View>
                 </TouchableOpacity>
             </Modal>
-        </Modal>
+
+
+            {/* ✅ 캘린더 선택 모달 */}
+            <Modal visible={showCalendarModal} transparent animationType="fade">
+                <TouchableOpacity
+                    style={styles.pickerOverlay}
+                    activeOpacity={1}
+                    onPress={() => setShowCalendarModal(false)}
+                >
+                    <View style={styles.calendarModalContainer}>
+                        <Calendar
+                            current={date}
+                            onDayPress={(day: any) => {
+                                setDate(day.dateString);
+                                setShowCalendarModal(false);
+                            }}
+                            markedDates={{
+                                [date]: { selected: true, selectedColor: Colors.orange }
+                            }}
+                            theme={{
+                                calendarBackground: 'transparent',
+                                textSectionTitleColor: '#b6c1cd',
+                                selectedDayBackgroundColor: Colors.orange,
+                                selectedDayTextColor: '#ffffff',
+                                todayTextColor: Colors.orange,
+                                dayTextColor: '#ffffff',
+                                textDisabledColor: '#444',
+                                monthTextColor: '#ffffff',
+                                arrowColor: Colors.orange,
+                            }}
+                        />
+                    </View>
+                </TouchableOpacity>
+            </Modal>
+        </Modal >
     );
 }
 
@@ -980,13 +1137,26 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         paddingVertical: 8,
         borderRadius: 20,
-        borderWidth: 1,
-        borderColor: '#444',
-        gap: 6,
+        backgroundColor: 'rgba(255, 255, 255, 0.05)',
     },
-    categoryTabActive: { backgroundColor: '#5B7FBF', borderColor: '#5B7FBF' },
-    categoryTabText: { fontFamily: 'Pretendard-Medium', fontSize: 14, color: '#888' },
-    categoryTabTextActive: { color: '#fff' },
+    categoryTabActive: {
+        backgroundColor: Colors.orange,
+    },
+    categoryTabDisabled: {
+        opacity: 0.4,
+    },
+    categoryTabText: {
+        fontSize: 14,
+        color: '#888',
+        marginLeft: 6,
+    },
+    categoryTabTextActive: {
+        color: '#fff',
+        fontWeight: '600',
+    },
+    categoryTabTextDisabled: {
+        color: '#444',
+    },
     content: { flex: 1, paddingHorizontal: 20 },
 
     // 경조사 UI 스타일
@@ -1153,6 +1323,13 @@ const styles = StyleSheet.create({
         padding: 20,
         width: '80%',
         maxWidth: 320,
+    },
+    calendarModalContainer: {
+        backgroundColor: Colors.navy,
+        borderRadius: 20,
+        padding: 16,
+        width: '90%',
+        maxWidth: 400,
     },
     optionModalTitle: {
         fontFamily: 'Pretendard-Bold',

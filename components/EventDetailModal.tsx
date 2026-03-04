@@ -4,6 +4,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { BlurView } from 'expo-blur';
 import { addToCalendar } from '../services/calendar';
 import { useRouter } from 'expo-router';
+import { CommentThread } from './CommentThread';
 
 interface EventDetailModalProps {
     visible: boolean;
@@ -318,9 +319,16 @@ export function EventDetailModal({ visible, event, onClose, onDelete, onEdit }: 
                             </View>
                         </View>
                     )}
+
+                    {/* 커뮤니티 피드 (관심사 일정 전용) */}
+                    {event.source === 'interest' && (
+                        <View style={styles.commentSection}>
+                            <CommentThread eventId={event.id} />
+                        </View>
+                    )}
                 </View>
             </View>
-        </Modal >
+        </Modal>
     );
 }
 
@@ -592,4 +600,9 @@ const styles = StyleSheet.create({
         color: Colors.text,
         lineHeight: 22,
     },
+    commentSection: {
+        flex: 1,
+        marginTop: 20,
+        minHeight: 250, // 키보드 등 공간 확보용 최소 높이
+    }
 });
