@@ -24,6 +24,7 @@ const CATEGORY_COLORS: Record<string, string> = {
     ceremony: '#8B5CF6',   // Purple (Distinct from expense red)
     todo: '#10B981',       // Emerald (Distinct from income blue)
     schedule: '#FBBF24',   // Amber (High visibility)
+    interest: '#3B82F6',   // Blue (파란색)
     wedding: '#D946EF',    // Fuchsia
     funeral: '#64748B',    // Slate
     birthday: '#EC4899',   // Pink
@@ -60,18 +61,38 @@ export default function CalendarScreen() {
     const [loading, setLoading] = useState(true);
 
     // 카테고리 필터 상태
-    const [filters, setFilters] = useState<{ ceremony: boolean; todo: boolean; schedule: boolean; expense: boolean }>({
+    const [filters, setFilters] = useState<{ ceremony: boolean; todo: boolean; schedule: boolean; expense: boolean; interest: boolean }>({
         ceremony: true,
         todo: true,
         schedule: true,
         expense: true, // 가계부 필터 기본 켜짐
+        interest: true,
     });
+
+    const resolveFilterCategory = useCallback((event: EventRecord): EventCategory => {
+        if (
+            ['movie', 'festival', 'performance', 'exhibition', 'popup'].includes(event.type) ||
+            event.category === 'interest' ||
+            event.source === 'interest'
+        ) {
+            return 'interest';
+        }
+        const raw = (event.category || '').toLowerCase();
+        if (raw === 'ceremony' || raw === 'todo' || raw === 'schedule' || raw === 'expense' || raw === 'interest') {
+            return raw as EventCategory;
+        }
+        if (raw === 'performance' || raw === 'exhibition' || raw === 'festival' || raw === 'popup') {
+            return 'interest';
+        }
+        return 'ceremony';
+    }, []);
+
     const markedDates = useMemo(() => {
         const newMarkedDates: any = {};
 
         // 1. 내부 일정 처리
         events.forEach(event => {
-            const category = event.category || 'ceremony';
+            const category = resolveFilterCategory(event);
             if (!filters[category]) return;
 
             let color = CATEGORY_COLORS[category];
@@ -94,6 +115,7 @@ export default function CalendarScreen() {
             }
             newMarkedDates[event.date].events.push({
                 ...event,
+                category,
                 color,
             });
         });
@@ -150,7 +172,7 @@ export default function CalendarScreen() {
         }
 
         return newMarkedDates;
-    }, [events, externalEvents, filters]);
+    }, [events, externalEvents, filters, resolveFilterCategory]);
 
 
     // FAB 확장 상태
@@ -771,6 +793,12 @@ export default function CalendarScreen() {
                     color={CATEGORY_COLORS.expense}
                     onPress={() => toggleFilter('expense')}
                 />
+                <AnimatedFilterChip
+                    label="관심"
+                    checked={filters.interest}
+                    color={CATEGORY_COLORS.interest}
+                    onPress={() => toggleFilter('interest')}
+                />
             </View>
 
             {/* 요일 헤더 (월별 보기에만) */}
@@ -1176,6 +1204,7 @@ const styles = StyleSheet.create({
     filterContainer: {
         flexDirection: 'row',
         justifyContent: 'center',
+        flexWrap: 'wrap',
         paddingVertical: 4,
         gap: 8,
         backgroundColor: Colors.navy,

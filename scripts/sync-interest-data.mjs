@@ -74,7 +74,7 @@ async function syncCultureEvents(cultureCalId, exhibCalId) {
                 location: get('place') || '',
                 memo: `장르: ${realmName}\n기간: ${fmtDate(get('startDate'))} ~ ${fmtDate(get('endDate'))}\n문의: ${get('phone') || 'N/A'}`,
                 type: isExhibit ? 'exhibition' : 'performance',
-                category: isExhibit ? 'exhibition' : 'performance',
+                category: 'schedule',
                 external_resource_id: `culture_portal_${get('seq')}`,
             });
         }
@@ -151,7 +151,7 @@ async function syncFestivalEvents(festivalCalId) {
         location: f.addr1 || '',
         memo: `축제 기간: ${fmtDate(f.eventstartdate)} ~ ${fmtDate(f.eventenddate)}\n장소: ${f.addr1}`,
         type: 'festival',
-        category: 'interest',
+        category: 'schedule',
         external_resource_id: `tourapi_festival_${f.contentid}`,
     }));
 

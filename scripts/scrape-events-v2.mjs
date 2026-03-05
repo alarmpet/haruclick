@@ -27,6 +27,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const TODAY = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
 const TODAY_COMPACT = TODAY.replace(/-/g, '');
 
+// 3개월 후 날짜 (축제 API eventEndDate용)
+const THREE_MONTHS_LATER = new Date(Date.now() + 9 * 60 * 60 * 1000 + 90 * 24 * 60 * 60 * 1000)
+    .toISOString().split('T')[0].replace(/-/g, '');
+
 // ============================================================
 // 유틸리티
 // ============================================================
@@ -143,7 +147,7 @@ async function syncCultureAPI(perfCalId, exhibCalId) {
                     location: get('place') || '',
                     memo: `장르: ${realmName}\n기간: ${fmtDate(get('startDate'))} ~ ${fmtDate(get('endDate'))}`,
                     type: isExhibit ? 'exhibition' : 'performance',
-                    category: 'interest',
+                    category: 'schedule',
                     external_resource_id: `culture_portal_${get('seq')}`,
                 });
             }
@@ -170,39 +174,57 @@ async function syncCultureAPI(perfCalId, exhibCalId) {
 async function syncFestivalAPI(festCalId) {
     console.log('\n📡 [공공 API] 한국관광공사 — 지역축제');
 
-    const baseParams = `serviceKey=${CULTURE_API_KEY}&numOfRows=50&pageNo=1&MobileOS=ETC&MobileApp=HaruClick&_type=json`;
-    let data = null;
+    const allItems = [];
+    const maxPages = 5;
 
-    // 방법 1: searchFestival1
-    try {
-        const res = await fetch(`https://apis.data.go.kr/B551011/KorService2/searchFestival1?${baseParams}&arrange=A&eventStartDate=${TODAY_COMPACT}`);
-        const json = await res.json();
-        data = json?.response?.body?.items?.item;
-    } catch { }
-
-    // 방법 2: areaBasedList1 (축제)
-    if (!data) {
+    // 방법 1: searchFestival1 — eventStartDate~eventEndDate(3개월), 페이지네이션
+    let usedFallback = false;
+    for (let page = 1; page <= maxPages; page++) {
         try {
-            const res = await fetch(`https://apis.data.go.kr/B551011/KorService2/areaBasedList1?${baseParams}&contentTypeId=15`);
+            const params = `serviceKey=${CULTURE_API_KEY}&numOfRows=100&pageNo=${page}&MobileOS=ETC&MobileApp=HaruClick&_type=json&arrange=A&eventStartDate=${TODAY_COMPACT}&eventEndDate=${THREE_MONTHS_LATER}`;
+            const res = await fetch(`https://apis.data.go.kr/B551011/KorService2/searchFestival1?${params}`);
             const json = await res.json();
-            data = json?.response?.body?.items?.item;
-        } catch { }
+            const pageData = json?.response?.body?.items?.item;
+            if (!pageData || (Array.isArray(pageData) && pageData.length === 0)) break;
+            const pageItems = Array.isArray(pageData) ? pageData : [pageData];
+            allItems.push(...pageItems);
+            if (pageItems.length < 100) break; // 마지막 페이지
+        } catch (e) {
+            console.log(`  ⚠️ searchFestival1 page${page} 실패: ${e.message}`);
+            break;
+        }
     }
 
-    if (!data || data.length === 0) {
+    // 방법 2: areaBasedList1 fallback (축제 contentTypeId=15)
+    if (allItems.length === 0) {
+        usedFallback = true;
+        try {
+            const params = `serviceKey=${CULTURE_API_KEY}&numOfRows=100&pageNo=1&MobileOS=ETC&MobileApp=HaruClick&_type=json&contentTypeId=15`;
+            const res = await fetch(`https://apis.data.go.kr/B551011/KorService2/areaBasedList1?${params}`);
+            const json = await res.json();
+            const pageData = json?.response?.body?.items?.item;
+            if (pageData) allItems.push(...(Array.isArray(pageData) ? pageData : [pageData]));
+        } catch (e) {
+            console.log(`  ⚠️ areaBasedList1 fallback 실패: ${e.message}`);
+        }
+    }
+
+    if (allItems.length === 0) {
         console.log('  ⚠️ 지역축제 API 응답 없음');
         return 0;
     }
 
-    const items = (Array.isArray(data) ? data : [data]).map(f => ({
+    console.log(`  📦 수집: ${allItems.length}건 (fallback=${usedFallback})`);
+
+    const items = allItems.map(f => ({
         name: f.title || '무제',
         event_date: fmtDate(f.eventstartdate) || TODAY,
         start_time: '10:00',
         end_time: '22:00',
         location: f.addr1 || '',
-        memo: `축제 기간: ${fmtDate(f.eventstartdate)} ~ ${fmtDate(f.eventenddate)}`,
+        memo: `축제 기간: ${fmtDate(f.eventstartdate)} ~ ${fmtDate(f.eventenddate)}\n장소: ${f.addr1 || ''}`,
         type: 'festival',
-        category: 'interest',
+        category: 'schedule',
         external_resource_id: `tourapi_festival_${f.contentid}`,
     }));
 
@@ -306,7 +328,7 @@ function parseInterparkHtml(html, type) {
                 event_date: eventDate || TODAY,
                 location: location || '',
                 type,
-                category: 'interest',
+                category: 'schedule',
                 external_resource_id: `interpark_${type}_${hashCode(name)}`,
             });
         });
@@ -330,7 +352,7 @@ function parseInterparkHtml(html, type) {
                     event_date: fmtDate(match[2]) || TODAY,
                     location: '',
                     type,
-                    category: 'interest',
+                    category: 'schedule',
                     external_resource_id: `interpark_${type}_${hashCode(name)}`,
                 });
             }

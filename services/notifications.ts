@@ -237,7 +237,7 @@ export async function syncInterestNotifications() {
         // 1. 알림이 켜진(notify_enabled = true) 구독 정보만 가져오기
         const { data: subs, error: subError } = await supabase
             .from('user_interest_subscriptions')
-            .select('calendar_id')
+            .select('calendar_id, active_filters')
             .eq('user_id', user.id)
             .eq('notify_enabled', true);
 
@@ -254,28 +254,47 @@ export async function syncInterestNotifications() {
 
         const { data: events, error: eventError } = await supabase
             .from('events')
-            .select('id, title, date, start_time, alarm_minutes')
+            .select('id, name, event_date, start_time, calendar_id, region, detail_type')
             .in('calendar_id', calendarIds)
-            .gte('date', todayStr)
-            .lte('date', nextWeekStr)
-            .eq('source', 'interest');
+            .gte('event_date', todayStr)
+            .lte('event_date', nextWeekStr);
 
         if (eventError) throw eventError;
 
+        // 필터 맵 구성
+        const filterMap = new Map<string, any>();
+        for (const sub of subs) {
+            if (sub.active_filters) {
+                filterMap.set(sub.calendar_id, sub.active_filters);
+            }
+        }
+
+        // 이벤트 필터링
+        const filteredEvents = (events || []).filter(event => {
+            const filters = filterMap.get(event.calendar_id);
+            if (!filters) return true;
+
+            const { regions, detail_types } = filters;
+            if (regions && regions.length > 0 && (!event.region || !regions.includes(event.region))) return false;
+            if (detail_types && detail_types.length > 0 && (!event.detail_type || !detail_types.includes(event.detail_type))) return false;
+
+            return true;
+        });
+
         // 3. 차례대로 알림 스케줄링 (기본 60분 전 알림)
-        for (const ev of events || []) {
+        for (const ev of filteredEvents) {
             // 해당 이벤트에 alarm_minutes 값이 없으면 기본 60분 전 알림 세팅
-            const minutesBefore = ev.alarm_minutes ?? 60;
+            const minutesBefore = 60;
             await scheduleEventNotification(
-                ev.title,
-                ev.date,
+                ev.name,
+                ev.event_date,
                 ev.start_time || '09:00', // 시간 미지정 시 오전 9시 알림
                 minutesBefore,
                 ev.id
             );
         }
 
-        console.log(`[syncInterestNotifications] Successfully scheduled ${events?.length || 0} interest events.`);
+        console.log(`[syncInterestNotifications] Successfully scheduled ${filteredEvents.length} interest events.`);
 
     } catch (error) {
         console.error('[syncInterestNotifications] Error:', error);

@@ -1,5 +1,6 @@
 import { supabase, invalidateCalendarCache } from './client';
 import { showError } from '../errorHandler';
+import { invalidateCalendarIdsCache } from './calendars';
 
 export interface InterestCategory {
     id: string;
@@ -18,6 +19,10 @@ export interface UserInterestSubscription {
     category_id: string;
     calendar_id: string;
     notify_enabled: boolean;
+    active_filters?: {
+        regions?: string[];
+        detail_types?: string[];
+    };
 }
 
 /**
@@ -122,6 +127,7 @@ export async function toggleSubscription(
 
         // 캐시 초기화 (홈 화면 일정 갱신용)
         invalidateCalendarCache(user.id);
+        invalidateCalendarIdsCache();
         return true;
     } catch (error) {
         console.error('[toggleSubscription] Error:', error);
@@ -152,5 +158,134 @@ export async function updateSubscriptionNotification(
     } catch (error) {
         console.error('[updateSubscriptionNotification] Error:', error);
         return false;
+    }
+}
+
+/**
+ * 관심 카테고리 구독의 하위 필터(지역/세부유형) 업데이트
+ */
+export async function updateSubscriptionFilters(
+    categoryId: string,
+    filters: UserInterestSubscription['active_filters']
+): Promise<boolean> {
+    try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return false;
+
+        const { error } = await supabase
+            .from('user_interest_subscriptions')
+            .update({ active_filters: filters })
+            .eq('user_id', user.id)
+            .eq('category_id', categoryId);
+
+        if (error) throw error;
+
+        invalidateCalendarCache(user.id);
+        return true;
+    } catch (error) {
+        console.error('[updateSubscriptionFilters] Error:', error);
+        return false;
+    }
+}
+
+/**
+ * 필터 설정 UI에서 사용할 수 있는 지역/유형 옵션 목록 조회
+ */
+export async function getAvailableFilterOptions() {
+    return {
+        regions: [
+            '서울', '부산', '대구', '인천', '광주', '대전', '울산', '세종',
+            '경기', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주'
+        ],
+        detailTypes: ['festival', 'exhibition', 'performance', 'concert', 'musical', 'movie', 'policy']
+    };
+}
+
+/**
+ * 공용 캘린더의 이벤트를 구독 없이 열람 (Discover 뷰용)
+ * 구독하지 않아도 관심 탐색 화면에서 미리 볼 수 있도록 제공
+ * @param calendarId 공용 캘린더 ID (interest_categories.target_calendar_id)
+ * @param limit 최대 조회 건수 (기본 50)
+ */
+export async function getPublicCalendarEvents(calendarId: string, limit = 50) {
+    try {
+        const today = new Date().toISOString().split('T')[0];
+        const { data, error } = await supabase
+            .from('events')
+            .select('id, name, event_date, start_time, end_time, location, memo, type, category, external_resource_id')
+            .eq('calendar_id', calendarId)
+            .gte('event_date', today)
+            .order('event_date', { ascending: true })
+            .limit(limit)
+            .abortSignal(AbortSignal.timeout(10000)); // 10초 타임아웃
+
+        if (error) throw error;
+        return data || [];
+    } catch (error) {
+        console.error('[getPublicCalendarEvents] Error:', error);
+        return [];
+    }
+}
+
+/**
+ * 공용 캘린더의 단일 이벤트를 개인 이벤트로 스크랩 (Import)
+ * 중복 가져오기 방지: external_resource_id 기반 upsert
+ * @param event 공용 캘린더에서 가져온 이벤트 객체
+ */
+export async function importEventToMyCalendar(event: {
+    id: string;
+    name: string;
+    event_date: string;
+    start_time?: string;
+    end_time?: string;
+    location?: string;
+    memo?: string;
+    type: string;
+    category: string;
+    external_resource_id?: string;
+}): Promise<{ success: boolean; message: string }> {
+    try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return { success: false, message: '로그인이 필요합니다.' };
+
+        // 내 기본 캘린더 ID 조회
+        const { data: myCalendars } = await supabase
+            .from('calendars')
+            .select('id')
+            .eq('owner_id', user.id)
+            .eq('calendar_type', 'personal')
+            .limit(1)
+            .single();
+
+        const importResourceId = event.external_resource_id
+            ? `import_${event.external_resource_id}`
+            : `import_${event.id}`;
+
+        const { error } = await supabase
+            .from('events')
+            .upsert({
+                calendar_id: myCalendars?.id ?? null,
+                user_id: user.id,
+                name: event.name,
+                event_date: event.event_date,
+                start_time: event.start_time || '10:00',
+                end_time: event.end_time || '23:59',
+                location: event.location || '',
+                memo: event.memo || '',
+                type: event.type,
+                category: 'interest',
+                external_resource_id: importResourceId,
+            }, {
+                onConflict: 'user_id,external_resource_id',
+                ignoreDuplicates: true,
+            });
+
+        if (error) throw error;
+
+        invalidateCalendarCache(user.id);
+        return { success: true, message: '내 캘린더에 담겼습니다! 📅' };
+    } catch (error) {
+        console.error('[importEventToMyCalendar] Error:', error);
+        return { success: false, message: '가져오기에 실패했습니다.' };
     }
 }

@@ -304,7 +304,7 @@ async function upsertEvents(events, calendarId, sourceName) {
         location: e.location || '',
         memo: e.memo || `출처: ${sourceName}`,
         type: e.type || 'interest',
-        category: 'interest',
+        category: 'schedule',
         external_resource_id: `scrape_${sourceName.replace(/\s/g, '_')}_${i}_${e.event_date}`,
     }));
 

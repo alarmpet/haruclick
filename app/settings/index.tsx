@@ -158,6 +158,11 @@ export default function SettingsScreen() {
                     label="외부 캘린더 연동"
                     onPress={() => router.push('/settings/calendar-sync')}
                 />
+                <SettingItem
+                    icon="star-outline"
+                    label="관심 캘린더 관리"
+                    onPress={() => router.push('/settings/interests')}
+                />
             </View>
 
             <View style={[styles.section, { backgroundColor: colors.card }]}>

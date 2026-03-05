@@ -2,6 +2,7 @@
 import { showError } from '../errorHandler';
 import { EventRecord, EventCategory } from './types';
 import { getMyCalendarIds } from './calendars';
+import { getMySubscriptions, UserInterestSubscription } from './interests';
 
 /**
  * Build a safe .or() filter string for calendar-based event queries.
@@ -41,6 +42,61 @@ function extractTime(dateTime?: string): string | undefined {
     return timePart === '00:00' ? undefined : timePart;
 }
 
+function normalizeEventCategory(category?: string): EventCategory {
+    const raw = (category || '').trim().toLowerCase();
+
+    if (raw === 'ceremony' || raw === 'todo' || raw === 'schedule' || raw === 'expense') {
+        return raw;
+    }
+
+    // Interest/culture feeds sometimes use domain-specific labels.
+    if (raw === 'interest' || raw === 'performance' || raw === 'exhibition' || raw === 'festival' || raw === 'popup' || raw === 'movie' || raw === 'policy') {
+        return 'interest';
+    }
+
+    return 'ceremony';
+}
+
+/**
+ * 관심 카테고리 필터를 인메모리로 적용합니다. (1차 적용)
+ * 향후 RPC나 View를 이용한 서버 사이드 필터링으로 개선 예정입니다.
+ */
+function applyInterestFilters(events: any[], subscriptions: UserInterestSubscription[]) {
+    // 캘린더 ID 단위로 필터 조건 매핑
+    const filterMap = new Map<string, UserInterestSubscription['active_filters']>();
+    for (const sub of subscriptions) {
+        if (sub.active_filters) {
+            filterMap.set(sub.calendar_id, sub.active_filters);
+        }
+    }
+
+    return events.filter(event => {
+        // 관심 캘린더의 이벤트가 아니면 그대로 통과
+        if (!event.calendar_id || !filterMap.has(event.calendar_id)) {
+            return true;
+        }
+
+        const filters = filterMap.get(event.calendar_id);
+        const { regions, detail_types } = filters || {};
+
+        // 1. 지역 필터 (regions가 비어있으면 모든 지역 허용)
+        if (regions && regions.length > 0) {
+            if (!event.region || !regions.includes(event.region)) {
+                return false;
+            }
+        }
+
+        // 2. 세부유형 필터 (detail_types가 비어있으면 모든 유형 허용)
+        if (detail_types && detail_types.length > 0) {
+            if (!event.detail_type || !detail_types.includes(event.detail_type)) {
+                return false;
+            }
+        }
+
+        return true;
+    });
+}
+
 export async function updateEvent(id: string, updates: any) {
     try {
         const { error } = await supabase.from('events').update(updates).eq('id', id);
@@ -66,7 +122,7 @@ export async function getUpcomingEvents(limit = 2): Promise<EventRecord[]> {
         const cacheKey = `upcoming_${user.id}_${limit}`;
         const cached = getCached<EventRecord[]>(cacheKey);
         if (cached) {
-            console.log('[Cache HIT] getUpcomingEvents');
+            if (__DEV__) console.log('[Cache HIT] getUpcomingEvents');
             return cached;
         }
 
@@ -74,13 +130,14 @@ export async function getUpcomingEvents(limit = 2): Promise<EventRecord[]> {
             // KST 기준 내일 날짜 (UTC+9)
             const today = new Date(new Date().getTime() + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
             const myCalendarIds = await getMyCalendarIds();
+            const subscriptions = await getMySubscriptions();
 
             let query = supabase
                 .from('events')
-                .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location, calendar_id, created_by')
+                .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location, region, detail_type, calendar_id, created_by')
                 .gt('event_date', today)
                 .order('event_date', { ascending: true })
-                .limit(limit);
+                .limit(limit * 3);
 
             if (myCalendarIds.length > 0) {
                 query = query.or(buildCalendarOrFilter(myCalendarIds, user.id));
@@ -92,9 +149,11 @@ export async function getUpcomingEvents(limit = 2): Promise<EventRecord[]> {
 
             if (error) throw error;
 
-            const result = data.map((item: any) => ({
+            const filteredData = applyInterestFilters(data || [], subscriptions).slice(0, limit);
+
+            const result = filteredData.map((item: any) => ({
                 id: item.id,
-                category: item.category || 'ceremony',
+                category: normalizeEventCategory(item.category),
                 type: item.type === 'APPOINTMENT' ? '일정' : item.type, // UI 표시용 매핑
                 name: item.name,
                 relation: item.relation,
@@ -151,11 +210,12 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
     return withInflight(inflightKey, async () => {
         const userFilter = (query: any) => userId ? query.eq('user_id', userId) : query;
         const myCalendarIds = userId ? await getMyCalendarIds() : [];
+        const subscriptions = userId ? await getMySubscriptions() : [];
 
         // 1. Events (캘린더 기반 조회)
         let eventsQuery = supabase
             .from('events')
-            .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location, calendar_id, created_by')
+            .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location, region, detail_type, calendar_id, created_by')
             .gte('event_date', today)
             .lt('event_date', tomorrow)
             .order('event_date', { ascending: true });
@@ -194,9 +254,11 @@ export async function getTodayEvents(): Promise<EventRecord[]> {
                 .order('transaction_date', { ascending: true })
         );
 
-        const eventRecords = (events || []).map((item: any) => ({
+        const filteredEvents = applyInterestFilters(events || [], subscriptions);
+
+        const eventRecords = filteredEvents.map((item: any) => ({
             id: item.id,
-            category: item.category || 'ceremony',
+            category: normalizeEventCategory(item.category),
             type: item.type,
             name: item.name,
             relation: item.relation,
@@ -269,12 +331,16 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
     const userId = user?.id;
 
     if (year && month) {
-        const start = new Date(year, month - 1, 1);
-        const end = new Date(year, month, 1);
-        startIso = start.toISOString();
-        endIso = end.toISOString();
-        startDate = startIso.split('T')[0];
-        endDate = endIso.split('T')[0];
+        const paddedMonth = String(month).padStart(2, '0');
+        const nextYear = month === 12 ? year + 1 : year;
+        const nextMonth = month === 12 ? 1 : month + 1;
+        const paddedNextMonth = String(nextMonth).padStart(2, '0');
+
+        // Build local date boundaries directly to avoid UTC ISO date shifts.
+        startDate = `${year}-${paddedMonth}-01`;
+        endDate = `${nextYear}-${paddedNextMonth}-01`;
+        startIso = `${startDate}T00:00:00`;
+        endIso = `${endDate}T00:00:00`;
     }
 
     const inflightKey = `events_${userId ?? 'public'}_${startDate ?? 'all'}_${endDate ?? 'all'}`;
@@ -296,12 +362,13 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
         }
         const userFilter = (query: any) => userId ? query.eq('user_id', userId) : query;
         const myCalendarIds = userId ? await getMyCalendarIds() : [];
+        const subscriptions = userId ? await getMySubscriptions() : [];
 
         // 1. Fetch Events
-        console.log('[getEvents] Fetching events table...', { year, month });
+        if (__DEV__) console.log('[getEvents] Fetching events table...', { year, month });
         let eventsQuery = supabase
             .from('events')
-            .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location, calendar_id, created_by')
+            .select('id, category, type, name, relation, event_date, amount, is_received, memo, start_time, end_time, location, region, detail_type, calendar_id, created_by')
             .order('event_date', { ascending: true });
 
         if (startDate && endDate) {
@@ -318,10 +385,10 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
         if (eventError) {
             console.error('[getEvents] Events query error:', eventError);
         }
-        console.log('[getEvents] Events fetched:', events?.length);
+        if (__DEV__) console.log('[getEvents] Events fetched:', events?.length);
 
         // 2. Fetch Ledger
-        console.log('[getEvents] Fetching ledger table...');
+        if (__DEV__) console.log('[getEvents] Fetching ledger table...');
         let ledgerQuery = userFilter(
             supabase
                 .from('ledger')
@@ -337,10 +404,10 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
         if (ledgerError) {
             console.error('[getEvents] Ledger query error:', ledgerError);
         }
-        console.log('[getEvents] Ledger fetched:', ledger?.length);
+        if (__DEV__) console.log('[getEvents] Ledger fetched:', ledger?.length);
 
         // 3. Fetch Bank Transactions
-        console.log('[getEvents] Fetching bank_transactions table...');
+        if (__DEV__) console.log('[getEvents] Fetching bank_transactions table...');
         let bankQuery = userFilter(
             supabase
                 .from('bank_transactions')
@@ -356,11 +423,13 @@ export async function getEvents(year?: number, month?: number): Promise<EventRec
         if (bankError) {
             console.error('[getEvents] Bank query error:', bankError);
         }
-        console.log('[getEvents] Bank fetched:', bank?.length);
+        if (__DEV__) console.log('[getEvents] Bank fetched:', bank?.length);
 
-        const eventRecords = (events || []).map((item: any) => ({
+        const filteredEvents = applyInterestFilters(events || [], subscriptions);
+
+        const eventRecords = filteredEvents.map((item: any) => ({
             id: item.id,
-            category: item.category || 'ceremony',
+            category: normalizeEventCategory(item.category),
             type: item.type,
             name: item.name,
             relation: item.relation,

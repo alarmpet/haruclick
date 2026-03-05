@@ -1,0 +1,32 @@
+name: Sync Government Policies
+
+on:
+  schedule:
+    # 매주 월·목 04:30 KST (19:30 UTC)
+    - cron: '30 19 * * 1,4'
+  workflow_dispatch:
+
+jobs:
+  sync-policies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run policy sync
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          YOUTH_API_KEY: ${{ secrets.YOUTH_API_KEY }}
+          BOKJIRO_API_KEY: ${{ secrets.BOKJIRO_API_KEY }}
+        run: node scripts/sync-policies.mjs

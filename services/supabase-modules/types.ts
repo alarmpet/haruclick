@@ -1,4 +1,4 @@
-export type EventCategory = 'ceremony' | 'todo' | 'schedule' | 'expense';
+export type EventCategory = 'ceremony' | 'todo' | 'schedule' | 'expense' | 'interest';
 
 export interface EventRecord {
     id: string;
@@ -15,7 +15,8 @@ export interface EventRecord {
     startTime?: string; // 시작 시간
     endTime?: string; // 종료 시간
     location?: string; // 장소
-    source: 'events' | 'ledger' | 'bank_transactions' | 'external'; // 데이터 출처 (삭제 시 사용)
+    source: 'events' | 'ledger' | 'bank_transactions' | 'external' | 'interest'; // 데이터 출처 (삭제 시 사용)
+    external_resource_id?: string; // 수집기(크롤러) 등에서 받아온 외부 고유 ID
     color?: string; // 캘린더 색상 (외부 일정 등)
     // Shared Calendar Fields
     calendar_id?: string;

@@ -65,23 +65,30 @@ export default function LoginScreen() {
 
     const handleSocialLogin = async (provider: 'google' | 'kakao') => {
         try {
-            const redirectTo = Platform.select({
-                ios: 'haruclick://login-callback',
-                android: 'haruclick://login-callback',
-                default: 'haruclick://login-callback',
-            });
+            const isWeb = Platform.OS === 'web';
+
+            // 웹: window.location.origin 기반 HTTPS URL 사용
+            // 네이티브(iOS/Android): 기존 커스텀 딥링크 스킴 유지
+            const redirectTo = isWeb
+                ? (typeof window !== 'undefined'
+                    ? `${window.location.origin}/login-callback`
+                    : undefined)
+                : 'haruclick://login-callback';
 
             const { data, error } = await supabase.auth.signInWithOAuth({
                 provider: provider as any,
                 options: {
                     redirectTo,
-                    skipBrowserRedirect: true,
+                    // 웹은 브라우저 리다이렉트 필요, 네이티브는 앱 내 처리
+                    skipBrowserRedirect: !isWeb,
                 }
             });
 
             if (error) throw error;
 
-            if (data?.url) {
+            // 네이티브 환경에서만 Linking으로 브라우저 열기
+            // 웹은 supabase.auth.signInWithOAuth가 자동으로 브라우저 리다이렉트 처리
+            if (!isWeb && data?.url) {
                 await Linking.openURL(data.url);
             }
         } catch (e: any) {

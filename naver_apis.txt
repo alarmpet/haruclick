@@ -1,0 +1,9 @@
+https://o4508894542495744.ingest.us.sentry.io/api/4510187406950400/envelope/?sentry_version=7&sentry_key=c9ae4f95b8c88106fd40279b960fb2fa&sentry_client=sentry.javascript.react%2F10.14.0
+https://api-gw.sports.naver.com/cms/templates/kbaseball_schedule_league_tab
+https://api-gw.sports.naver.com/one/myTeam
+https://api-gw.sports.naver.com/one/notice
+https://api-gw.sports.naver.com/cms/templates/kbaseball_schedule_post_season_image
+https://api-gw.sports.naver.com/schedule/calendar?upperCategoryId=kbaseball&categoryIds=%2Ckbo%2Ckbs%2Ckbaseballetc%2Cpremier12%2Capbc
+https://api-gw.sports.naver.com/schedule/games?fields=basic%2Cschedule%2Cbaseball%2CmanualRelayUrl&upperCategoryId=kbaseball&fromDate=2026-03-05&toDate=2026-03-05&size=500
+https://api-gw.sports.naver.com/schedule/calendar?upperCategoryId=kbaseball&categoryIds=%2Ckbo%2Ckbs%2Ckbaseballetc%2Cpremier12%2Capbc&date=2026-03-05
+https://nam.veta.naver.com/gfp/v1?u=m_sports_top&xdid=sports_placard_top&p=calp%3Akbaseball%2Clocation%3Aschedule%2Cda_dom_id%3Asports_placard_top&an=m.sports.naver.com&c=https%3A%2F%2Fm.sports.naver.com%2Fkbaseball%2Fschedule%2Findex&sn=web&sv=3.7.1&nt=0&iv=917b3f43-1be1-4e49-918f-18b2fa1c7a0f&ivt=0&sa=0&rui=392082383&br=0

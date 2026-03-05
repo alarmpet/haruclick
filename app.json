@@ -62,7 +62,8 @@
       "react-native-document-scanner-plugin",
       "@config-plugins/detox",
       "react-native-fast-tflite",
-      "./plugins/withAndroidManifestFix"
+      "./plugins/withAndroidManifestFix",
+      "./plugins/withAndroidDebugCleartextConfig"
     ],
     "extra": {
       "router": {},

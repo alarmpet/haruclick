@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState } from 'react';
-import { View, ActivityIndicator, Text, StyleSheet, Linking } from 'react-native';
+import { View, ActivityIndicator, Text, StyleSheet, Linking, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { supabase } from '../services/supabase';
 import { Colors } from '../constants/Colors';
@@ -47,6 +47,19 @@ export default function LoginCallback() {
 
         const handleCallback = async () => {
             let linkSub: { remove: () => void } | null = null;
+
+            // 웹 환경: window.location.href에서 직접 토큰 추출 (Linking API 미사용)
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                const webUrl = window.location.href;
+                if (__DEV__) console.log('[LoginCallback] Web URL:', webUrl);
+                const applied = await setSessionFromUrl(webUrl);
+                if (applied) {
+                    setStatus('로그인 성공!');
+                    router.replace('/');
+                    return;
+                }
+            }
+
             try {
                 linkSub = Linking.addEventListener('url', async (event) => {
                     const applied = await setSessionFromUrl(event.url);
