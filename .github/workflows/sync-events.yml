@@ -2,14 +2,17 @@ name: Sync Interest Events (Self Scraper v2)
 
 on:
   schedule:
-    # 매주 월요일, 목요일 새벽 4시(KST) = UTC 19:00
+    # Monday/Thursday 04:00 KST
     - cron: '0 19 * * 0,3'
-  workflow_dispatch: {}  # 수동 실행 가능
+  workflow_dispatch: {}
+  repository_dispatch:
+    types:
+      - sync_events
 
 jobs:
   scrape-and-sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -23,15 +26,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Playwright Chromium 설치 (GPT 불필요, Firecrawl 불필요)
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      # 통합 스크래퍼 v2 실행 (공공 API + Playwright + Cheerio)
-      - name: Run Self Scraper v2 (GPT-free)
+      - name: Run Self Scraper v2
         run: node scripts/scrape-events-v2.mjs
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           CULTURE_API_KEY: ${{ secrets.CULTURE_API_KEY }}
-

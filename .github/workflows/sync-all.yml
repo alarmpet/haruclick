@@ -1,0 +1,108 @@
+name: Sync All Data Sources
+
+on:
+  workflow_dispatch:
+    inputs:
+      events:
+        description: "Run interest events sync"
+        required: true
+        default: true
+        type: boolean
+      movies:
+        description: "Run movie sync"
+        required: true
+        default: true
+        type: boolean
+      policies:
+        description: "Run government policy sync"
+        required: true
+        default: true
+        type: boolean
+      sports:
+        description: "Run sports sync"
+        required: true
+        default: true
+        type: boolean
+  repository_dispatch:
+    types:
+      - sync_all
+
+jobs:
+  sync-all:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RUN_EVENTS: ${{ github.event_name == 'repository_dispatch' || inputs.events }}
+      RUN_MOVIES: ${{ github.event_name == 'repository_dispatch' || inputs.movies }}
+      RUN_POLICIES: ${{ github.event_name == 'repository_dispatch' || inputs.policies }}
+      RUN_SPORTS: ${{ github.event_name == 'repository_dispatch' || inputs.sports }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install Playwright Chromium
+        if: ${{ env.RUN_EVENTS == 'true' || env.RUN_MOVIES == 'true' }}
+        run: npx playwright install --with-deps chromium
+
+      - name: Run interest events sync
+        if: ${{ env.RUN_EVENTS == 'true' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CULTURE_API_KEY: ${{ secrets.CULTURE_API_KEY }}
+        run: node scripts/scrape-events-v2.mjs
+
+      - name: Run movie sync
+        if: ${{ env.RUN_MOVIES == 'true' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          KOBIS_API_KEY: ${{ secrets.KOBIS_API_KEY }}
+        run: node scripts/sync-movies.mjs
+
+      - name: Run government policy sync
+        if: ${{ env.RUN_POLICIES == 'true' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BOKJIRO_API_KEY: ${{ secrets.BOKJIRO_API_KEY }}
+        run: node scripts/sync-policies.mjs
+
+      - name: Run football sync
+        if: ${{ env.RUN_SPORTS == 'true' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: node scripts/sync-sports-football.mjs
+
+      - name: Run KBO sync
+        if: ${{ env.RUN_SPORTS == 'true' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/sync-sports-kbo.mjs
+
+      - name: Run K-League sync
+        if: ${{ env.RUN_SPORTS == 'true' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/sync-sports-kleague.mjs
+
+      - name: Run WBC sync
+        if: ${{ env.RUN_SPORTS == 'true' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/sync-sports-wbc.mjs
