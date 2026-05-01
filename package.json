@@ -10,6 +10,8 @@
     "android": "expo start --android --port 8090",
     "ios": "expo start --ios --port 8090",
     "web": "expo start --web --port 8090",
+    "build:web": "expo export -p web",
+    "serve:web": "expo serve --platform web",
     "lint": "eslint .",
     "test": "jest",
     "e2e:build": "detox build --configuration android.emu.debug",
