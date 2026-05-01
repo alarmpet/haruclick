@@ -46,7 +46,12 @@ jobs:
         run: node scripts/sync-sports-kleague.mjs
 
       - name: Run WBC Sync
+        if: ${{ hashFiles('scripts/sync-sports-wbc.mjs') != '' && hashFiles('scripts/lib/interest-category-mapping.mjs') != '' }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: node scripts/sync-sports-wbc.mjs
+
+      - name: Skip WBC Sync
+        if: ${{ hashFiles('scripts/sync-sports-wbc.mjs') == '' || hashFiles('scripts/lib/interest-category-mapping.mjs') == '' }}
+        run: echo "Skipping WBC sync because required script files are not present in this revision."
